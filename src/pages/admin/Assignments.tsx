@@ -5,8 +5,10 @@ import { Settings, User, CreditCard, CheckCircle, XCircle } from 'lucide-react';
 
 interface Account {
   id: string;
-  username: string;
-  websiteURL: string;
+  type: 'pph' | 'legal';
+  username?: string;
+  name?: string;
+  websiteURL?: string;
   agentName: string;
   assignedToPlayerUid?: string;
   assignedToPlayerName?: string;
@@ -51,7 +53,9 @@ export default function Assignments() {
 
           return {
             id: accountDoc.id,
+            type: accountData.type || 'pph',
             username: accountData.username,
+            name: accountData.name,
             websiteURL: accountData.websiteURL,
             agentName,
             assignedToPlayerUid: accountData.assignedToPlayerUid,
@@ -148,7 +152,7 @@ export default function Assignments() {
                   value={account.id}
                   className="bg-gray-800 text-white hover:bg-cyan-500"
                 >
-                  {account.username} ({account.agentName})
+                  {(account.type === 'pph' ? account.username : account.name) || 'Unnamed'} (Account Holder: {account.agentName})
                 </option>
               ))}
             </select>
@@ -220,7 +224,7 @@ export default function Assignments() {
                     <CreditCard className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <h3 className="font-medium text-white">{account.username}</h3>
+                    <h3 className="font-medium text-white">{(account.type === 'pph' ? account.username : account.name) || 'Unnamed'}</h3>
                     <p className="text-sm text-gray-400">Agent: {account.agentName}</p>
                   </div>
                 </div>
