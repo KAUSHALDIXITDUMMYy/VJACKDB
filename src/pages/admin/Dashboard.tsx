@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Users, CreditCard, UserPlus, TrendingUp, Calendar, Filter, BarChart3, Eye, Search } from 'lucide-react';
+import { useSettings } from '../../contexts/SettingsContext';
+import { Users, CreditCard, UserPlus, TrendingUp, Calendar, Filter, BarChart3, Eye, Search, Settings, Download } from 'lucide-react';
 import { format, subDays, startOfDay, endOfDay, parseISO } from 'date-fns';
+import * as XLSX from 'xlsx';
 
 interface DashboardStats {
   totalAgents: number;
@@ -14,6 +16,7 @@ interface DashboardStats {
   inactiveAccounts: number;
   pphAccounts: number;
   legalAccounts: number;
+  taxRate: number;
 }
 
 interface AgentStats {
@@ -46,6 +49,29 @@ interface AccountStats {
   totalEntries: number;
 }
 
+interface EntryData {
+  id: string;
+  date: string;
+  accountId: string;
+  accountName: string;
+  accountType: string;
+  playerName: string;
+  playerUid: string;
+  startingBalance: number;
+  endingBalance: number;
+  refillAmount: number;
+  withdrawal: number;
+  profitLoss: number;
+  clickerAmount: number;
+  accHolderAmount: number;
+  companyAmount: number;
+  taxableAmount: number;
+  referralAmount: number;
+  accountStatus: string;
+  complianceReview: string;
+  notes: string;
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats>({
     totalAgents: 0,
@@ -56,11 +82,13 @@ export default function Dashboard() {
     activeAccounts: 0,
     inactiveAccounts: 0,
     pphAccounts: 0,
-    legalAccounts: 0
+    legalAccounts: 0,
+    taxRate: 10
   });
   const [agentStats, setAgentStats] = useState<AgentStats[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStats[]>([]);
   const [accountStats, setAccountStats] = useState<AccountStats[]>([]);
+  const [allEntries, setAllEntries] = useState<EntryData[]>([]);
   const [dateFilter, setDateFilter] = useState('today');
   const [customDateRange, setCustomDateRange] = useState({
     startDate: format(new Date(), 'yyyy-MM-dd'),
@@ -69,15 +97,64 @@ export default function Dashboard() {
   const [viewMode, setViewMode] = useState<'overview' | 'agents' | 'players' | 'accounts'>('overview');
   const [overviewFilter, setOverviewFilter] = useState<'total' | 'active' | 'inactive'>('total');
   const [loading, setLoading] = useState(true);
+  const [showTaxModal, setShowTaxModal] = useState(false);
+  const [newTaxRate, setNewTaxRate] = useState(10);
+  const [isUpdatingTax, setIsUpdatingTax] = useState(false);
 
   useEffect(() => {
     fetchStats();
+    fetchTaxRate();
   }, [dateFilter, customDateRange]);
+
+  const fetchTaxRate = async () => {
+    try {
+      const taxDoc = await getDoc(doc(db, 'settings', 'taxRate'));
+      if (taxDoc.exists()) {
+        const rate = taxDoc.data().value;
+        setStats(prev => ({ ...prev, taxRate: rate }));
+        setNewTaxRate(rate);
+      }
+    } catch (error) {
+      console.error('Error fetching tax rate:', error);
+    }
+  };
+
+  const updateTaxRate = async () => {
+    if (!newTaxRate || isNaN(Number(newTaxRate))) {
+      return;
+    }
+
+    const rate = Number(newTaxRate);
+    if (rate < 0 || rate > 100) {
+      return;
+    }
+
+    setIsUpdatingTax(true);
+    try {
+      await setDoc(doc(db, 'settings', 'taxRate'), {
+        value: rate,
+        updatedAt: new Date()
+      }, { merge: true });
+      
+      setStats(prev => ({ ...prev, taxRate: rate }));
+      setShowTaxModal(false);
+    } catch (error) {
+      console.error('Error updating tax rate:', error);
+    } finally {
+      setIsUpdatingTax(false);
+    }
+  };
+
+  const handleTaxRateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (value === '' || (/^\d*$/.test(value) && Number(value) >= 0 && Number(value) <= 100)) {
+      setNewTaxRate(Number(value));
+    }
+  };
 
   const fetchStats = async () => {
     setLoading(true);
     try {
-      // Get date range for filtering
       const { startDate, endDate } = getDateRange();
 
       // Fetch agents
@@ -118,7 +195,10 @@ export default function Dashboard() {
       );
       const entriesSnapshot = await getDocs(entriesQuery);
       const totalTransactions = entriesSnapshot.size;
-      const entries = entriesSnapshot.docs.map(doc => doc.data());
+      const entries = entriesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
 
       // Calculate total profit
       let totalProfit = 0;
@@ -126,13 +206,44 @@ export default function Dashboard() {
         totalProfit += entry.profitLoss || 0;
       });
 
+      // Prepare entry data for export
+      const entriesData: EntryData[] = await Promise.all(
+        entries.map(async (entry) => {
+          const account = accounts.find(acc => acc.id === entry.accountId);
+          const player = players.find(p => p.uid === entry.playerUid);
+          
+          return {
+            id: entry.id,
+            date: entry.date,
+            accountId: entry.accountId,
+            accountName: account ? (account.type === 'pph' ? account.username : account.name) : 'Unknown Account',
+            accountType: account?.type || 'pph',
+            playerName: player?.name || 'Unknown Player',
+            playerUid: entry.playerUid,
+            startingBalance: entry.startingBalance || 0,
+            endingBalance: entry.endingBalance || 0,
+            refillAmount: entry.refillAmount || 0,
+            withdrawal: entry.withdrawal || 0,
+            profitLoss: entry.profitLoss || 0,
+            clickerAmount: entry.clickerAmount || 0,
+            accHolderAmount: entry.accHolderAmount || 0,
+            companyAmount: entry.companyAmount || 0,
+            taxableAmount: entry.taxableAmount || 0,
+            referralAmount: entry.referralAmount || 0,
+            accountStatus: entry.accountStatus || 'active',
+            complianceReview: entry.complianceReview || 'N/A',
+            notes: entry.notes || ''
+          };
+        })
+      );
+      setAllEntries(entriesData);
+
       // Calculate agent stats
       const agentStatsData: AgentStats[] = await Promise.all(
         agents.map(async (agent) => {
           const agentAccounts = accounts.filter(acc => acc.agentId === agent.id);
           const assignedPlayerUids = [...new Set(agentAccounts.map(acc => acc.assignedToPlayerUid).filter(Boolean))];
 
-          // Calculate profit for this agent's accounts
           const agentEntries = entries.filter(entry =>
             agentAccounts.some(acc => acc.id === entry.accountId)
           );
@@ -171,18 +282,15 @@ export default function Dashboard() {
       // Calculate account stats
       const accountStatsData: AccountStats[] = await Promise.all(
         accounts.map(async (account) => {
-          // Get agent name
           const agent = agents.find(a => a.id === account.agentId);
           const agentName = agent?.name || 'Unknown Agent';
 
-          // Get assigned player name if exists
           let assignedToPlayerName = '';
           if (account.assignedToPlayerUid) {
             const player = players.find(p => p.uid === account.assignedToPlayerUid);
             assignedToPlayerName = player?.name || 'Unknown Player';
           }
 
-          // Calculate profit for this account
           const accountEntries = entries.filter(entry => entry.accountId === account.id);
           const accountProfit = accountEntries.reduce((sum, entry) => sum + (entry.profitLoss || 0), 0);
 
@@ -208,7 +316,8 @@ export default function Dashboard() {
         activeAccounts,
         inactiveAccounts,
         pphAccounts,
-        legalAccounts
+        legalAccounts,
+        taxRate: stats.taxRate
       });
       setAgentStats(agentStatsData);
       setPlayerStats(playerStatsData);
@@ -270,6 +379,81 @@ export default function Dashboard() {
     }
   };
 
+  const exportToExcel = () => {
+    // Prepare data based on current view mode
+    let dataToExport: any[] = [];
+    let fileName = '';
+
+    switch (viewMode) {
+      case 'overview':
+        // Export all entries for the selected date range
+        dataToExport = allEntries.map(entry => ({
+          Date: entry.date,
+          'Account ID': entry.accountId,
+          'Account Name': entry.accountName,
+          'Account Type': entry.accountType.toUpperCase(),
+          'Player Name': entry.playerName,
+          'Starting Balance': entry.startingBalance,
+          'Ending Balance': entry.endingBalance,
+          'Refill Amount': entry.refillAmount,
+          Withdrawal: entry.withdrawal,
+          'Profit/Loss': entry.profitLoss,
+          'Clicker Amount': entry.clickerAmount,
+          'Account Holder Amount': entry.accHolderAmount,
+          'Company Amount': entry.companyAmount,
+          'Taxable Amount': entry.taxableAmount,
+          'Referral Amount': entry.referralAmount,
+          'Account Status': entry.accountStatus.toUpperCase(),
+          'Compliance Review': entry.complianceReview,
+          Notes: entry.notes
+        }));
+        fileName = `Entries_${format(new Date(), 'yyyyMMdd_HHmmss')}`;
+        break;
+      case 'agents':
+        dataToExport = agentStats.map(agent => ({
+          'Agent Name': agent.name,
+          'Total Accounts': agent.accountCount,
+          'Assigned Players': agent.playerCount,
+          'Total Profit': agent.totalProfit,
+          'Commission Percentage': agent.commissionPercentage,
+          'Flat Commission': agent.flatCommission || 0,
+          'Commission Expense': (agent.totalProfit * agent.commissionPercentage) / 100 + (agent.flatCommission || 0)
+        }));
+        fileName = `Agents_${format(new Date(), 'yyyyMMdd_HHmmss')}`;
+        break;
+      case 'players':
+        dataToExport = playerStats.map(player => ({
+          'Player Name': player.name,
+          Email: player.email,
+          'Assigned Accounts': player.accountCount,
+          'Total Entries': player.totalEntries,
+          'Total Profit': player.totalProfit
+        }));
+        fileName = `Players_${format(new Date(), 'yyyyMMdd_HHmmss')}`;
+        break;
+      case 'accounts':
+        dataToExport = accountStats.map(account => ({
+          'Account Name': account.name,
+          'Account Type': account.type.toUpperCase(),
+          Status: account.status.toUpperCase(),
+          'Agent Name': account.agentName,
+          'Assigned Player': account.assignedToPlayerName || 'N/A',
+          'Total Entries': account.totalEntries,
+          'Total Profit': account.totalProfit
+        }));
+        fileName = `Accounts_${format(new Date(), 'yyyyMMdd_HHmmss')}`;
+        break;
+    }
+
+    // Create worksheet and workbook
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+
+    // Export the file
+    XLSX.writeFile(wb, `${fileName}.xlsx`);
+  };
+
   const filteredStats = getFilteredStats();
 
   const statCards = [
@@ -277,29 +461,29 @@ export default function Dashboard() {
       title: 'Total Account Holders',
       value: filteredStats.agents,
       icon: Users,
-      color: 'from-cyberpunk-blue to-cyberpunk-pink',
-      bgColor: 'bg-cyberpunk-blue/10'
+      color: 'from-cyan-500 to-blue-500',
+      bgColor: 'bg-cyan-500/10'
     },
     {
       title: 'Total Accounts',
       value: filteredStats.accounts,
       icon: CreditCard,
-      color: 'from-cyberpunk-pink to-cyberpunk-yellow',
-      bgColor: 'bg-cyberpunk-pink/10'
+      color: 'from-purple-500 to-pink-500',
+      bgColor: 'bg-purple-500/10'
     },
     {
       title: 'Active Accounts',
       value: stats.activeAccounts,
       icon: BarChart3,
-      color: 'from-cyberpunk-yellow to-cyberpunk-blue',
-      bgColor: 'bg-cyberpunk-yellow/10'
+      color: 'from-green-500 to-emerald-500',
+      bgColor: 'bg-green-500/10'
     },
     {
       title: 'Total Clickers',
       value: filteredStats.players,
       icon: UserPlus,
-      color: 'from-cyberpunk-violet to-cyberpunk-pink',
-      bgColor: 'bg-cyberpunk-violet/10'
+      color: 'from-orange-500 to-red-500',
+      bgColor: 'bg-orange-500/10'
     }
   ];
 
@@ -308,13 +492,20 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-bold bg-gradient-to-r from-cyberpunk-blue to-cyberpunk-pink bg-clip-text text-transparent">
+          <h1 className="text-2xl lg:text-3xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
             Admin Dashboard
           </h1>
-          <p className="text-cyberpunk-yellow mt-1">Monitor your vjac.co platform performance</p>
+          <p className="text-gray-400 mt-1">Monitor your business platform performance</p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-4 sm:space-y-0 sm:space-x-4">
+          <button
+            onClick={() => setShowTaxModal(true)}
+            className="flex items-center space-x-2 bg-white/5 hover:bg-white/10 border border-purple-500/20 px-3 py-2 rounded-lg transition-colors"
+          >
+            <Settings className="w-5 h-5 text-gray-400" />
+            <span className="text-sm text-white">Tax Rate: <span className="text-gray-400">{stats.taxRate}%</span></span>
+          </button>
           <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-4 sm:space-y-0 sm:space-x-4">
             <div className="flex items-center space-x-2">
               <Filter className="w-5 h-5 text-gray-400" />
@@ -361,7 +552,54 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-
+      
+      {/* Tax Rate Modal */}
+      {showTaxModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-gray-900 backdrop-blur-lg rounded-xl p-6 border border-cyan-500/20 w-full max-w-md">
+            <h2 className="text-xl font-bold text-white mb-4">Update Tax Rate</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Tax Rate (%)
+                </label>
+                <input
+                  type="number"
+                  value={newTaxRate}
+                  onChange={handleTaxRateChange}
+                  min="0"
+                  max="100"
+                  className="w-full px-4 py-3 bg-gray-800 border border-cyan-500/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                  placeholder="Enter tax rate (0-100)"
+                />
+              </div>
+              <div className="flex justify-end space-x-4">
+                <button
+                  onClick={() => {
+                    setNewTaxRate(stats.taxRate);
+                    setShowTaxModal(false);
+                  }}
+                  className="px-6 py-3 text-gray-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={updateTaxRate}
+                  disabled={isUpdatingTax}
+                  className={`px-6 py-3 rounded-lg transition-all duration-200 ${
+                    isUpdatingTax
+                      ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white'
+                  }`}
+                >
+                  {isUpdatingTax ? 'Saving...' : 'Save Tax Rate'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* View Mode Selector */}
       <div className="flex flex-wrap gap-2">
         {[
@@ -375,16 +613,26 @@ export default function Dashboard() {
             <button
               key={mode.key}
               onClick={() => setViewMode(mode.key as any)}
-              className={`flex items-center space-x-2 px-3 lg:px-4 py-2 rounded-lg transition-all duration-200 ${viewMode === mode.key
-                  ? 'bg-gradient-to-r from-cyberpunk-blue to-cyberpunk-pink text-white'
+              className={`flex items-center space-x-2 px-3 lg:px-4 py-2 rounded-lg transition-all duration-200 ${
+                viewMode === mode.key
+                  ? 'bg-gradient-to-r from-cyan-500 to-purple-500 text-white'
                   : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
-                }`}
+              }`}
             >
               <Icon className="w-4 h-4 lg:w-5 lg:h-5" />
               <span className="text-sm lg:text-base">{mode.label}</span>
             </button>
           );
         })}
+        
+        {/* Export Button */}
+        <button
+          onClick={exportToExcel}
+          className="flex items-center space-x-2 px-3 lg:px-4 py-2 rounded-lg transition-all duration-200 bg-green-500/10 text-green-400 hover:bg-green-500/20 hover:text-green-300"
+        >
+          <Download className="w-4 h-4 lg:w-5 lg:h-5" />
+          <span className="text-sm lg:text-base">Export to Excel</span>
+        </button>
       </div>
 
       {viewMode === 'overview' && (
@@ -401,10 +649,11 @@ export default function Dashboard() {
                 <button
                   key={filter.key}
                   onClick={() => setOverviewFilter(filter.key as any)}
-                  className={`px-3 py-1 rounded-lg transition-all duration-200 text-sm ${overviewFilter === filter.key
-                      ? 'bg-gradient-to-r from-cyberpunk-blue to-cyberpunk-pink text-white'
+                  className={`px-3 py-1 rounded-lg transition-all duration-200 text-sm ${
+                    overviewFilter === filter.key
+                      ? 'bg-gradient-to-r from-cyan-500 to-purple-500 text-white'
                       : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
-                    }`}
+                  }`}
                 >
                   {filter.label}
                 </button>
@@ -504,10 +753,12 @@ export default function Dashboard() {
 
       {viewMode === 'agents' && (
         <div className="bg-black/20 backdrop-blur-sm rounded-xl p-4 lg:p-6 border border-purple-500/20">
-          <h2 className="text-lg lg:text-xl font-bold text-white mb-4 lg:mb-6 flex items-center">
-            <Users className="w-5 h-5 lg:w-6 lg:h-6 mr-2" />
-            Account Holder Performance Dashboard
-          </h2>
+          <div className="flex items-center justify-between mb-4 lg:mb-6">
+            <h2 className="text-lg lg:text-xl font-bold text-white flex items-center">
+              <Users className="w-5 h-5 lg:w-6 lg:h-6 mr-2" />
+              Account Holder Performance Dashboard
+            </h2>
+          </div>
 
           {loading ? (
             <div className="text-center py-8">
@@ -518,7 +769,7 @@ export default function Dashboard() {
               {agentStats.map((agent) => (
                 <div
                   key={agent.id}
-                  className="bg-gradient-to-r from-cyberpunk-blue/10 to-cyberpunk-pink/10 rounded-lg p-4 border border-cyberpunk-blue/20"
+                  className="bg-gradient-to-r from-cyan-500/10 to-purple-500/10 rounded-lg p-4 border border-cyan-500/20"
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
                     <div>
@@ -528,11 +779,11 @@ export default function Dashboard() {
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 text-center">
                       <div>
                         <p className="text-sm text-gray-400">Accounts</p>
-                        <p className="text-lg lg:text-xl font-bold text-cyberpunk-blue">{agent.accountCount}</p>
+                        <p className="text-lg lg:text-xl font-bold text-cyan-400">{agent.accountCount}</p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Players</p>
-                        <p className="text-lg lg:text-xl font-bold text-cyberpunk-pink">{agent.playerCount}</p>
+                        <p className="text-lg lg:text-xl font-bold text-purple-400">{agent.playerCount}</p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Total Profit</p>
@@ -541,8 +792,8 @@ export default function Dashboard() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-sm text-gray-400">Commission Earned</p>
-                        <p className="text-lg lg:text-xl font-bold text-cyberpunk-yellow">
+                        <p className="text-sm text-gray-400">Commission Expense</p>
+                        <p className="text-lg lg:text-xl font-bold text-yellow-400">
                           ${((agent.totalProfit * agent.commissionPercentage) / 100 + (agent.flatCommission || 0)).toLocaleString()}
                         </p>
                       </div>
@@ -557,10 +808,12 @@ export default function Dashboard() {
 
       {viewMode === 'players' && (
         <div className="bg-black/20 backdrop-blur-sm rounded-xl p-4 lg:p-6 border border-purple-500/20">
-          <h2 className="text-lg lg:text-xl font-bold text-white mb-4 lg:mb-6 flex items-center">
-            <UserPlus className="w-5 h-5 lg:w-6 lg:h-6 mr-2" />
-            Clicker Performance Dashboard
-          </h2>
+          <div className="flex items-center justify-between mb-4 lg:mb-6">
+            <h2 className="text-lg lg:text-xl font-bold text-white flex items-center">
+              <UserPlus className="w-5 h-5 lg:w-6 lg:h-6 mr-2" />
+              Clicker Performance Dashboard
+            </h2>
+          </div>
 
           {loading ? (
             <div className="text-center py-8">
@@ -581,11 +834,11 @@ export default function Dashboard() {
                     <div className="grid grid-cols-3 gap-4 lg:gap-6 text-center">
                       <div>
                         <p className="text-sm text-gray-400">Assigned Accounts</p>
-                        <p className="text-lg lg:text-xl font-bold text-cyberpunk-blue">{player.accountCount}</p>
+                        <p className="text-lg lg:text-xl font-bold text-cyan-400">{player.accountCount}</p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Total Entries</p>
-                        <p className="text-lg lg:text-xl font-bold text-cyberpunk-pink">{player.totalEntries}</p>
+                        <p className="text-lg lg:text-xl font-bold text-purple-400">{player.totalEntries}</p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Total Profit</p>
@@ -604,10 +857,12 @@ export default function Dashboard() {
 
       {viewMode === 'accounts' && (
         <div className="bg-black/20 backdrop-blur-sm rounded-xl p-4 lg:p-6 border border-purple-500/20">
-          <h2 className="text-lg lg:text-xl font-bold text-white mb-4 lg:mb-6 flex items-center">
-            <CreditCard className="w-5 h-5 lg:w-6 lg:h-6 mr-2" />
-            Account Performance Dashboard
-          </h2>
+          <div className="flex items-center justify-between mb-4 lg:mb-6">
+            <h2 className="text-lg lg:text-xl font-bold text-white flex items-center">
+              <CreditCard className="w-5 h-5 lg:w-6 lg:h-6 mr-2" />
+              Account Performance Dashboard
+            </h2>
+          </div>
 
           {loading ? (
             <div className="text-center py-8">
@@ -618,26 +873,29 @@ export default function Dashboard() {
               {accountStats.map((account) => (
                 <div
                   key={account.id}
-                  className={`rounded-lg p-4 border ${account.status === 'active'
+                  className={`rounded-lg p-4 border ${
+                    account.status === 'active'
                       ? 'bg-gradient-to-r from-green-500/10 to-emerald-500/10 border-green-500/20'
                       : 'bg-gradient-to-r from-red-500/10 to-pink-500/10 border-red-500/20'
-                    }`}
+                  }`}
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
                     <div>
                       <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-3 space-y-2 sm:space-y-0">
                         <h3 className="text-lg font-semibold text-white">{account.name}</h3>
                         <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 rounded-full text-xs ${account.type === 'pph'
+                          <span className={`px-2 py-1 rounded-full text-xs ${
+                            account.type === 'pph'
                               ? 'bg-purple-500/20 text-purple-400'
                               : 'bg-orange-500/20 text-orange-400'
-                            }`}>
+                          }`}>
                             {account.type.toUpperCase()}
                           </span>
-                          <span className={`px-2 py-1 rounded-full text-xs ${account.status === 'active'
+                          <span className={`px-2 py-1 rounded-full text-xs ${
+                            account.status === 'active'
                               ? 'bg-green-500/20 text-green-400'
                               : 'bg-red-500/20 text-red-400'
-                            }`}>
+                          }`}>
                             {account.status}
                           </span>
                         </div>
@@ -650,7 +908,7 @@ export default function Dashboard() {
                     <div className="grid grid-cols-2 gap-4 lg:gap-6 text-center">
                       <div>
                         <p className="text-sm text-gray-400">Total Entries</p>
-                        <p className="text-lg lg:text-xl font-bold text-cyberpunk-blue">{account.totalEntries}</p>
+                        <p className="text-lg lg:text-xl font-bold text-cyan-400">{account.totalEntries}</p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Total Profit</p>
@@ -666,8 +924,6 @@ export default function Dashboard() {
           )}
         </div>
       )}
-
-
     </div>
   );
 }

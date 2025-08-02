@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { collection, addDoc, getDocs, query, where, doc, getDoc, updateDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSettings } from '../../contexts/SettingsContext';
 import { ArrowLeft, Save, Calendar, DollarSign, ToggleLeft, ToggleRight, Edit, Trash2, Plus } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -12,9 +13,11 @@ interface Account {
   username?: string;
   name?: string;
   websiteURL?: string;
+  agentId: string;
   agentName: string;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'unused';
   depositAmount?: number;
+  referralPercentage?: number;
 }
 
 interface Entry {
@@ -70,36 +73,210 @@ export default function AccountEntry() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [taxRate, setTaxRate] = useState(10); // Default tax rate
 
-  useEffect(() => {
+ useEffect(() => {
     if (id && userData?.uid) {
       fetchAccountData();
+      fetchTaxRate();
     }
   }, [id, userData]);
 
-  useEffect(() => {
-    const profitLoss = 
-      (currentEntry.endingBalance || 0) - 
-      (currentEntry.startingBalance || 0) + 
-      (currentEntry.withdrawal || 0) - 
-      (currentEntry.refillAmount || 0);
-    if (profitLoss !== currentEntry.profitLoss) {
-      setCurrentEntry(prev => ({ ...prev, profitLoss }));
+  const fetchTaxRate = async () => {
+    try {
+      const taxDoc = await getDoc(doc(db, 'settings', 'taxRate'));
+      if (taxDoc.exists()) {
+        setTaxRate(taxDoc.data().value);
+      }
+    } catch (error) {
+      console.error('Error fetching tax rate:', error);
     }
-  }, [currentEntry.startingBalance, currentEntry.endingBalance, currentEntry.withdrawal, currentEntry.refillAmount]);
+  };
+  // Calculate all amounts whenever relevant fields change
+ useEffect(() => {
+    const calculateAmounts = async () => {
+      const profitLoss = 
+        (currentEntry.endingBalance || 0) - 
+        (currentEntry.startingBalance || 0) + 
+        (currentEntry.withdrawal || 0) - 
+        (currentEntry.refillAmount || 0);
+      
+      if (!account || !userData) {
+        setCurrentEntry(prev => ({
+          ...prev,
+          profitLoss
+        }));
+        return;
+      }
 
+      try {
+        // Calculate Clicker Amount
+        const clickerAmount = (profitLoss * (userData.percentage || 0)) / 100;
+        
+        // Get agent data for commission calculation
+        const agent = await getDoc(doc(db, 'agents', account.agentId));
+        const agentData = agent.data();
+        
+        // Calculate Account Holder Amount
+        const accHolderAmount = agentData ? 
+          ((profitLoss * (agentData.commissionPercentage || 0)) / 100) + 
+          (agentData.flatCommission || 0) : 0;
+        
+        // Calculate Tax Amount using the fetched tax rate
+        const taxAmount = (profitLoss * taxRate) / 100;
+        
+        // Calculate Referral Amount only if referralPercentage exists
+        const referralAmount = account.referralPercentage ? 
+          (profitLoss * account.referralPercentage) / 100 : 0;
+        
+        // Calculate Company Amount
+        const companyAmount = profitLoss - clickerAmount - accHolderAmount - taxAmount - referralAmount;
+        
+        // Update all calculated amounts
+        setCurrentEntry(prev => ({
+          ...prev,
+          profitLoss,
+          clickerAmount,
+          accHolderAmount,
+          companyAmount,
+          taxableAmount: taxAmount,
+          referralAmount
+        }));
+      } catch (error) {
+        console.error('Error calculating amounts:', error);
+      }
+    };
+
+    calculateAmounts();
+  }, [
+    currentEntry.startingBalance,
+    currentEntry.endingBalance,
+    currentEntry.withdrawal,
+    currentEntry.refillAmount,
+    account,
+    userData,
+    taxRate // Add taxRate to dependencies
+  ]);
+
+  // Similar calculation for editing mode
   useEffect(() => {
-    if (editingEntry) {
+    if (!editingEntry || !account || !userData) return;
+    
+    const calculateEditingAmounts = async () => {
       const profitLoss = 
         (editingEntry.endingBalance || 0) - 
         (editingEntry.startingBalance || 0) + 
         (editingEntry.withdrawal || 0) - 
         (editingEntry.refillAmount || 0);
-      if (profitLoss !== editingEntry.profitLoss) {
-        setEditingEntry(prev => prev ? ({ ...prev, profitLoss }) : null);
+      
+      try {
+        // Calculate Clicker Amount
+        const clickerAmount = (profitLoss * (userData.percentage || 0)) / 100;
+        
+        // Get agent data for commission calculation
+        const agent = await getDoc(doc(db, 'agents', account.agentId));
+        const agentData = agent.data();
+        
+        // Calculate Account Holder Amount
+        const accHolderAmount = agentData ? 
+          ((profitLoss * (agentData.commissionPercentage || 0)) / 100) + 
+          (agentData.flatCommission || 0) : 0;
+        
+        // Calculate Tax Amount using the fetched tax rate
+        const taxAmount = (profitLoss * taxRate) / 100;
+        
+        // Calculate Referral Amount only if referralPercentage exists
+        const referralAmount = account.referralPercentage ? 
+          (profitLoss * account.referralPercentage) / 100 : 0;
+        
+        // Calculate Company Amount
+        const companyAmount = profitLoss - clickerAmount - accHolderAmount - taxAmount - referralAmount;
+        
+        // Update all calculated amounts
+        setEditingEntry(prev => prev ? ({
+          ...prev,
+          profitLoss,
+          clickerAmount,
+          accHolderAmount,
+          companyAmount,
+          taxableAmount: taxAmount,
+          referralAmount
+        }) : null);
+      } catch (error) {
+        console.error('Error calculating amounts:', error);
       }
-    }
-  }, [editingEntry?.startingBalance, editingEntry?.endingBalance, editingEntry?.withdrawal, editingEntry?.refillAmount]);
+    };
+
+    calculateEditingAmounts();
+  }, [
+    editingEntry?.startingBalance,
+    editingEntry?.endingBalance,
+    editingEntry?.withdrawal,
+    editingEntry?.refillAmount,
+    account,
+    userData,
+    taxRate // Add taxRate to dependencies
+  ]);
+
+  // Similar calculation for editing mode
+  useEffect(() => {
+    if (!editingEntry || !account || !userData) return;
+    
+    const calculateEditingAmounts = async () => {
+      const profitLoss = 
+        (editingEntry.endingBalance || 0) - 
+        (editingEntry.startingBalance || 0) + 
+        (editingEntry.withdrawal || 0) - 
+        (editingEntry.refillAmount || 0);
+      
+      try {
+        // Calculate Clicker Amount
+        const clickerAmount = (profitLoss * (userData.percentage || 0)) / 100;
+        
+        // Get agent data for commission calculation
+        const agent = await getDoc(doc(db, 'agents', account.agentId));
+        const agentData = agent.data();
+        
+        // Calculate Account Holder Amount
+        const accHolderAmount = agentData ? 
+          ((profitLoss * (agentData.commissionPercentage || 0)) / 100) + 
+          (agentData.flatCommission || 0) : 0;
+        
+        // Fixed tax percentage (removed useSettings)
+        const taxPercentage = 10; // Default 10% tax
+        const taxAmount = (profitLoss * taxPercentage) / 100;
+        
+        // Calculate Referral Amount only if referralPercentage exists
+        const referralAmount = account.referralPercentage ? 
+          (profitLoss * account.referralPercentage) / 100 : 0;
+        
+        // Calculate Company Amount
+        const companyAmount = profitLoss - clickerAmount - accHolderAmount - taxAmount - referralAmount;
+        
+        // Update all calculated amounts
+        setEditingEntry(prev => prev ? ({
+          ...prev,
+          profitLoss,
+          clickerAmount,
+          accHolderAmount,
+          companyAmount,
+          taxableAmount: taxAmount,
+          referralAmount
+        }) : null);
+      } catch (error) {
+        console.error('Error calculating amounts:', error);
+      }
+    };
+
+    calculateEditingAmounts();
+  }, [
+    editingEntry?.startingBalance,
+    editingEntry?.endingBalance,
+    editingEntry?.withdrawal,
+    editingEntry?.refillAmount,
+    account,
+    userData
+  ]);
 
   const fetchAccountData = async () => {
     try {
@@ -112,24 +289,34 @@ export default function AccountEntry() {
         const agentDoc = await getDoc(doc(db, 'agents', accountData.agentId));
         const agentName = agentDoc.exists() ? agentDoc.data().name : 'Unknown Agent';
         
+        // Check if account has any entries to determine status
+        let status = accountData.status || 'unused';
+        const entriesQuery = query(
+          collection(db, 'entries'),
+          where('accountId', '==', id),
+          where('playerUid', '==', userData?.uid)
+        );
+        const entriesSnapshot = await getDocs(entriesQuery);
+        
+        if (entriesSnapshot.size > 0) {
+          status = 'active'; // Account has entries, set to active
+        } else if (status !== 'inactive') {
+          status = 'unused'; // No entries and not manually set to inactive
+        }
+        
         setAccount({
           id: accountDoc.id,
           type: accountData.type || 'pph',
           username: accountData.username,
           name: accountData.name,
           websiteURL: accountData.websiteURL,
+          agentId: accountData.agentId,
           agentName,
-          status: accountData.status || 'active',
-          depositAmount: accountData.depositAmount
+          status,
+          depositAmount: accountData.depositAmount,
+          referralPercentage: accountData.referralPercentage
         });
         
-        const entriesQuery = query(
-          collection(db, 'entries'),
-          where('accountId', '==', id),
-          where('playerUid', '==', userData?.uid),
-          orderBy('date', 'desc')
-        );
-        const entriesSnapshot = await getDocs(entriesQuery);
         const entriesData = entriesSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
@@ -143,7 +330,7 @@ export default function AccountEntry() {
         } else {
           setCurrentEntry(prev => ({
             ...prev,
-            accountStatus: accountData.status || 'active',
+            accountStatus: status === 'unused' ? 'active' : status,
             startingBalance: accountData.type === 'legal' ? (accountData.depositAmount || 0) : 0
           }));
         }
@@ -202,6 +389,14 @@ export default function AccountEntry() {
           ...entryToSave,
           createdAt: new Date()
         });
+        
+        // If account was unused, update to active
+        if (account?.status === 'unused') {
+          await updateDoc(doc(db, 'accounts', id!), {
+            status: 'active',
+            updatedAt: new Date()
+          });
+        }
       }
       
       if (account && currentEntry.accountStatus !== account.status) {
@@ -211,7 +406,7 @@ export default function AccountEntry() {
         });
       }
       
-      navigate('/player/dashboard');
+      fetchAccountData(); // Refresh data to reflect changes
     } catch (error) {
       console.error('Error saving entry:', error);
     } finally {
@@ -256,6 +451,25 @@ export default function AccountEntry() {
     if (window.confirm('Are you sure you want to delete this entry?')) {
       try {
         await deleteDoc(doc(db, 'entries', entryId));
+        
+        // Check if this was the last entry
+        const entriesQuery = query(
+          collection(db, 'entries'),
+          where('accountId', '==', id),
+          where('playerUid', '==', userData?.uid)
+        );
+        const entriesSnapshot = await getDocs(entriesQuery);
+        
+        if (entriesSnapshot.size === 0) {
+          // No entries left, set account status to 'unused' if not manually set to inactive
+          if (account?.status !== 'inactive') {
+            await updateDoc(doc(db, 'accounts', id!), {
+              status: 'unused',
+              updatedAt: new Date()
+            });
+          }
+        }
+        
         fetchAccountData();
       } catch (error) {
         console.error('Error deleting entry:', error);
@@ -277,7 +491,7 @@ export default function AccountEntry() {
         <p className="text-gray-400">Account not found or access denied.</p>
         <button
           onClick={() => navigate('/player/dashboard')}
-          className="mt-4 text-cyberpunk-blue hover:text-cyberpunk-pink transition-colors"
+          className="mt-4 text-cyan-400 hover:text-cyan-300 transition-colors"
         >
           Return to Dashboard
         </button>
@@ -285,39 +499,65 @@ export default function AccountEntry() {
     );
   }
 
+  // Helper function to render auto-calculated amount fields
+  const renderAmountInput = (
+    label: string,
+    value: number,
+    isAuto: boolean = true,
+    isPositive: boolean = true
+  ) => (
+    <div>
+      <label className="block text-sm font-medium text-gray-300 mb-2">
+        {label} {isAuto && '(Auto-calculated)'}
+      </label>
+      <input
+        type="number"
+        step="0.01"
+        value={value === 0 ? '' : value}
+        className={`w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none ${
+          isAuto ? 'cursor-not-allowed' : 'focus:ring-2 focus:ring-cyan-400'
+        } ${isPositive ? 'text-green-400' : 'text-red-400'}`}
+        disabled={isAuto}
+        readOnly={isAuto}
+      />
+    </div>
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
           <button
             onClick={() => navigate('/player/dashboard')}
-            className="p-2 text-gray-400 hover:text-cyberpunk-blue transition-colors"
+            className="p-2 text-gray-400 hover:text-cyan-400 transition-colors"
           >
             <ArrowLeft className="w-6 h-6" />
           </button>
           <div>
             <div className="flex items-center space-x-3">
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-cyberpunk-blue to-cyberpunk-pink bg-clip-text text-transparent">
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
                 {account.type === 'pph' ? account.username : account.name}
               </h1>
               <span className={`px-3 py-1 rounded-full text-sm ${
                 account.type === 'pph' 
-                  ? 'bg-cyberpunk-pink/20 text-cyberpunk-pink' 
-                  : 'bg-cyberpunk-yellow/20 text-cyberpunk-yellow'
+                  ? 'bg-purple-500/20 text-purple-400' 
+                  : 'bg-orange-500/20 text-orange-400'
               }`}>
                 {(account.type || 'pph').toUpperCase()}
               </span>
               <span className={`px-3 py-1 rounded-full text-sm ${
                 currentEntry.accountStatus === 'active' 
-                  ? 'bg-cyberpunk-blue/20 text-cyberpunk-blue' 
-                  : 'bg-cyberpunk-violet/20 text-cyberpunk-violet'
+                  ? 'bg-green-500/20 text-green-400' 
+                  : currentEntry.accountStatus === 'inactive'
+                  ? 'bg-red-500/20 text-red-400'
+                  : 'bg-yellow-500/20 text-yellow-400'
               }`}>
-                {currentEntry.accountStatus}
+                {currentEntry.accountStatus.toUpperCase()}
               </span>
             </div>
-            <p className="text-cyberpunk-yellow mt-1">Agent: {account.agentName}</p>
+            <p className="text-gray-400 mt-1">Agent: {account.agentName}</p>
             {account.type === 'legal' && account.depositAmount && (
-              <p className="text-sm text-cyberpunk-blue">Starting Balance: ${account.depositAmount.toLocaleString()}</p>
+              <p className="text-sm text-cyan-400">Starting Balance: ${account.depositAmount.toLocaleString()}</p>
             )}
           </div>
         </div>
@@ -328,7 +568,7 @@ export default function AccountEntry() {
         </div>
       </div>
 
-      <div className="bg-black/20 backdrop-blur-sm rounded-xl p-6 border border-cyberpunk-pink/20">
+      <div className="bg-black/20 backdrop-blur-sm rounded-xl p-6 border border-purple-500/20">
         <h2 className="text-xl font-bold text-white mb-6 flex items-center">
           <DollarSign className="w-6 h-6 mr-2" />
           Daily Performance Entry
@@ -344,7 +584,7 @@ export default function AccountEntry() {
                 type="date"
                 value={currentEntry.date}
                 onChange={(e) => handleInputChange('date', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
                 required
               />
             </div>
@@ -359,8 +599,8 @@ export default function AccountEntry() {
                   onClick={() => handleInputChange('accountStatus', currentEntry.accountStatus === 'active' ? 'inactive' : 'active')}
                   className={`flex items-center space-x-2 px-4 py-3 rounded-lg transition-all duration-200 ${
                     currentEntry.accountStatus === 'active'
-                      ? 'bg-cyberpunk-blue/20 text-cyberpunk-blue border border-cyberpunk-blue/30'
-                      : 'bg-cyberpunk-violet/20 text-cyberpunk-violet border border-cyberpunk-violet/30'
+                      ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                      : 'bg-red-500/20 text-red-400 border border-red-500/30'
                   }`}
                 >
                   {currentEntry.accountStatus === 'active' ? (
@@ -382,7 +622,7 @@ export default function AccountEntry() {
                 step="0.01"
                 value={currentEntry.startingBalance === 0 ? '' : currentEntry.startingBalance}
                 onChange={(e) => handleInputChange('startingBalance', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
                 required
               />
             </div>
@@ -396,7 +636,7 @@ export default function AccountEntry() {
                 step="0.01"
                 value={currentEntry.endingBalance === 0 ? '' : currentEntry.endingBalance}
                 onChange={(e) => handleInputChange('endingBalance', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
                 required
               />
             </div>
@@ -410,7 +650,7 @@ export default function AccountEntry() {
                 step="0.01"
                 value={currentEntry.refillAmount === 0 ? '' : currentEntry.refillAmount}
                 onChange={(e) => handleInputChange('refillAmount', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
               />
             </div>
             
@@ -423,7 +663,7 @@ export default function AccountEntry() {
                 step="0.01"
                 value={currentEntry.withdrawal === 0 ? '' : currentEntry.withdrawal}
                 onChange={(e) => handleInputChange('withdrawal', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
               />
             </div>
             
@@ -434,7 +674,7 @@ export default function AccountEntry() {
               <select
                 value={currentEntry.complianceReview}
                 onChange={(e) => handleInputChange('complianceReview', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue focus:bg-gray-800"
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:bg-gray-800"
                 required
               >
                 <option className="bg-gray-800 text-white" value="Requested Document">Requested Document</option>
@@ -444,20 +684,7 @@ export default function AccountEntry() {
               </select>
             </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Profit/Loss (Auto-calculated)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={currentEntry.profitLoss}
-                className={`w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none cursor-not-allowed ${
-                  currentEntry.profitLoss >= 0 ? 'text-cyberpunk-blue' : 'text-cyberpunk-violet'
-                }`}
-                disabled
-              />
-            </div>
+            {renderAmountInput('Profit/Loss', currentEntry.profitLoss, true, currentEntry.profitLoss >= 0)}
             
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -466,105 +693,18 @@ export default function AccountEntry() {
               <select
                 value={currentEntry.clickerSettled}
                 onChange={(e) => handleInputChange('clickerSettled', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue focus:bg-gray-800"
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:bg-gray-800"
               >
                 <option className="bg-gray-800 text-white" value="No">No</option>
                 <option className="bg-gray-800 text-white" value="Yes">Yes</option>
               </select>
             </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Clicker Amount
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={currentEntry.clickerAmount === 0 ? '' : currentEntry.clickerAmount}
-                onChange={(e) => handleInputChange('clickerAmount', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Account Holder Settled
-              </label>
-              <select
-                value={currentEntry.accHolderSettled}
-                onChange={(e) => handleInputChange('accHolderSettled', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue focus:bg-gray-800"
-              >
-                <option className="bg-gray-800 text-white" value="No">No</option>
-                <option className="bg-gray-800 text-white" value="Yes">Yes</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Account Holder Amount
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={currentEntry.accHolderAmount === 0 ? '' : currentEntry.accHolderAmount}
-                onChange={(e) => handleInputChange('accHolderAmount', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Company Settled
-              </label>
-              <select
-                value={currentEntry.companySettled}
-                onChange={(e) => handleInputChange('companySettled', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue focus:bg-gray-800"
-              >
-                <option className="bg-gray-800 text-white" value="No">No</option>
-                <option className="bg-gray-800 text-white" value="Yes">Yes</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Company Amount
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={currentEntry.companyAmount === 0 ? '' : currentEntry.companyAmount}
-                onChange={(e) => handleInputChange('companyAmount', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Taxable Amount
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={currentEntry.taxableAmount === 0 ? '' : currentEntry.taxableAmount}
-                onChange={(e) => handleInputChange('taxableAmount', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Referral Amount
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={currentEntry.referralAmount === 0 ? '' : currentEntry.referralAmount}
-                onChange={(e) => handleInputChange('referralAmount', e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
-              />
-            </div>
+            {renderAmountInput('Clicker Amount', currentEntry.clickerAmount)}
+            {renderAmountInput('Account Holder Amount', currentEntry.accHolderAmount)}
+            {renderAmountInput('Company Amount', currentEntry.companyAmount, true, currentEntry.companyAmount >= 0)}
+            {renderAmountInput('Taxable Amount', currentEntry.taxableAmount, true, false)}
+            {account?.referralPercentage && renderAmountInput('Referral Amount', currentEntry.referralAmount)}
           </div>
           
           <div>
@@ -575,7 +715,7 @@ export default function AccountEntry() {
               value={currentEntry.notes}
               onChange={(e) => handleInputChange('notes', e.target.value)}
               rows={3}
-              className="w-full px-4 py-3 bg-white/5 border border-cyberpunk-pink/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyberpunk-blue"
+              className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
               placeholder="Add any additional notes here..."
             />
           </div>
@@ -591,7 +731,7 @@ export default function AccountEntry() {
             <button
               type="submit"
               disabled={saving}
-              className="bg-gradient-to-r from-cyberpunk-blue to-cyberpunk-pink hover:from-cyberpunk-blue/60 hover:to-cyberpunk-pink/60 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 flex items-center space-x-2 disabled:opacity-50"
+              className="bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 flex items-center space-x-2 disabled:opacity-50"
             >
               <Save className="w-5 h-5" />
               <span>{saving ? 'Saving...' : 'Save Entry'}</span>
@@ -600,7 +740,7 @@ export default function AccountEntry() {
         </form>
       </div>
 
-      <div className="bg-black/20 backdrop-blur-sm rounded-xl p-6 border border-cyberpunk-pink/20">
+      <div className="bg-black/20 backdrop-blur-sm rounded-xl p-6 border border-purple-500/20">
         <h2 className="text-xl font-bold text-white mb-6">Previous Entries</h2>
         
         {entries.length === 0 ? (
@@ -613,7 +753,7 @@ export default function AccountEntry() {
             {entries.map((entry) => (
               <div
                 key={entry.id}
-                className="bg-white/5 rounded-lg p-4 border border-cyberpunk-pink/20"
+                className="bg-white/5 rounded-lg p-4 border border-purple-500/20"
               >
                 {editingEntry?.id === entry.id ? (
                   <form onSubmit={handleEditEntry} className="space-y-4">
@@ -624,7 +764,7 @@ export default function AccountEntry() {
                           type="date"
                           value={editingEntry.date}
                           onChange={(e) => handleEditInputChange('date', e.target.value)}
-                          className="w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-white text-sm"
+                          className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
                       </div>
                       <div>
@@ -634,7 +774,7 @@ export default function AccountEntry() {
                           step="0.01"
                           value={editingEntry.startingBalance === 0 ? '' : editingEntry.startingBalance}
                           onChange={(e) => handleEditInputChange('startingBalance', e.target.value)}
-                          className="w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-white text-sm"
+                          className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
                       </div>
                       <div>
@@ -644,7 +784,7 @@ export default function AccountEntry() {
                           step="0.01"
                           value={editingEntry.endingBalance === 0 ? '' : editingEntry.endingBalance}
                           onChange={(e) => handleEditInputChange('endingBalance', e.target.value)}
-                          className="w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-white text-sm"
+                          className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
                       </div>
                       <div>
@@ -654,7 +794,7 @@ export default function AccountEntry() {
                           step="0.01"
                           value={editingEntry.refillAmount === 0 ? '' : editingEntry.refillAmount}
                           onChange={(e) => handleEditInputChange('refillAmount', e.target.value)}
-                          className="w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-white text-sm"
+                          className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
                       </div>
                       <div>
@@ -664,7 +804,7 @@ export default function AccountEntry() {
                           step="0.01"
                           value={editingEntry.withdrawal === 0 ? '' : editingEntry.withdrawal}
                           onChange={(e) => handleEditInputChange('withdrawal', e.target.value)}
-                          className="w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-white text-sm"
+                          className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
                       </div>
                       <div>
@@ -672,7 +812,7 @@ export default function AccountEntry() {
                         <select
                           value={editingEntry.complianceReview}
                           onChange={(e) => handleEditInputChange('complianceReview', e.target.value)}
-                          className="w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-white text-sm focus:bg-gray-800"
+                          className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm focus:bg-gray-800"
                           required
                         >
                           <option className="bg-gray-800 text-white" value="Requested Document">Requested Document</option>
@@ -681,18 +821,12 @@ export default function AccountEntry() {
                           <option className="bg-gray-800 text-white" value="N/A">N/A</option>
                         </select>
                       </div>
-                      <div>
-                        <label className="block text-sm text-gray-400 mb-1">Profit/Loss</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={editingEntry.profitLoss}
-                          className={`w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-sm cursor-not-allowed ${
-                            editingEntry.profitLoss >= 0 ? 'text-cyberpunk-blue' : 'text-cyberpunk-violet'
-                          }`}
-                          disabled
-                        />
-                      </div>
+                      {renderAmountInput('Profit/Loss', editingEntry.profitLoss, true, editingEntry.profitLoss >= 0)}
+                      {renderAmountInput('Clicker Amount', editingEntry.clickerAmount)}
+                      {renderAmountInput('Account Holder Amount', editingEntry.accHolderAmount)}
+                      {renderAmountInput('Company Amount', editingEntry.companyAmount, true, editingEntry.companyAmount >= 0)}
+                      {renderAmountInput('Taxable Amount', editingEntry.taxableAmount, true, false)}
+                      {account?.referralPercentage && renderAmountInput('Referral Amount', editingEntry.referralAmount)}
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Notes</label>
@@ -700,7 +834,7 @@ export default function AccountEntry() {
                         value={editingEntry.notes}
                         onChange={(e) => handleEditInputChange('notes', e.target.value)}
                         rows={2}
-                        className="w-full px-3 py-2 bg-white/5 border border-cyberpunk-pink/20 rounded text-white text-sm"
+                        className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                       />
                     </div>
                     <div className="flex space-x-2">
@@ -738,7 +872,7 @@ export default function AccountEntry() {
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Profit/Loss</p>
-                        <p className={`font-bold ${entry.profitLoss >= 0 ? 'text-cyberpunk-blue' : 'text-cyberpunk-violet'}`}>
+                        <p className={`font-bold ${entry.profitLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           ${entry.profitLoss.toLocaleString()}
                         </p>
                       </div>
@@ -746,7 +880,7 @@ export default function AccountEntry() {
                     <div className="flex items-center space-x-2 ml-4">
                       <button
                         onClick={() => setEditingEntry(entry)}
-                        className="p-2 text-gray-400 hover:text-cyberpunk-blue transition-colors"
+                        className="p-2 text-gray-400 hover:text-cyan-400 transition-colors"
                       >
                         <Edit className="w-4 h-4" />
                       </button>

@@ -33,6 +33,8 @@ export default function Players() {
   const [loading, setLoading] = useState(true);
   const [activePlayersExpanded, setActivePlayersExpanded] = useState(true);
   const [inactivePlayersExpanded, setInactivePlayersExpanded] = useState(true);
+  // Add local state for editing percentage input
+  const [editingPercentage, setEditingPercentage] = useState<string>('');
 
   useEffect(() => {
     fetchPlayers();
@@ -99,7 +101,7 @@ export default function Players() {
         percentage: Number(newPlayer.percentage) || 0
       });
       
-      setNewPlayer({ email: '', password: '', name: '', percentage: 0 });
+      setNewPlayer({ email: '', password: '', name: '', percentage: '' });
       setShowModal(false);
       fetchPlayers();
     } catch (error) {
@@ -117,7 +119,7 @@ export default function Players() {
       await updateDoc(doc(db, collectionName, editingPlayer.id), {
         name: editingPlayer.name.trim(),
         email: editingPlayer.email.trim(),
-        percentage: Number(editingPlayer.percentage) || 0,
+        percentage: editingPlayer.percentage === undefined ? 0 : editingPlayer.percentage,
         updatedAt: new Date()
       });
       setEditingPlayer(null);
@@ -258,16 +260,20 @@ export default function Players() {
                           placeholder="Email Address"
                           required
                         />
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={editingPlayer?.percentage ?? 0}
-                          onChange={(e) => setEditingPlayer(editingPlayer ? { ...editingPlayer, percentage: Number(e.target.value) } : null)}
-                          className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white"
-                          placeholder="Percentage (%)"
-                          required
-                        />
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={editingPercentage}
+                            onChange={(e) => setEditingPercentage(e.target.value)}
+                            onBlur={() => setEditingPlayer(editingPlayer ? { ...editingPlayer, percentage: editingPercentage === '' ? undefined : Number(editingPercentage) } : null)}
+                            className="w-full px-3 py-2 pr-8 bg-white/5 border border-purple-500/20 rounded-lg text-white"
+                            placeholder="Percentage (%)"
+                            required
+                          />
+                          <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">%</span>
+                        </div>
                         <div className="flex space-x-2">
                           <button
                             type="submit"
@@ -298,7 +304,7 @@ export default function Players() {
                           </div>
                           <div className="flex items-center space-x-2">
                             <button
-                              onClick={() => setEditingPlayer(player)}
+                              onClick={() => { setEditingPlayer(player); setEditingPercentage(player.percentage !== undefined ? String(player.percentage) : ''); }}
                               className="p-2 text-gray-400 hover:text-cyan-400 transition-colors"
                             >
                               <Edit className="w-4 h-4" />
@@ -318,6 +324,9 @@ export default function Players() {
                           </div>
                           <div className="text-gray-400">
                             Created: {player.createdAt.toLocaleDateString()}
+                          </div>
+                          <div className="text-gray-400">
+                            Commission: {typeof player.percentage === 'number' ? player.percentage : 0}%
                           </div>
                         </div>
                       </>
@@ -451,6 +460,9 @@ export default function Players() {
                           <div className="text-gray-400">
                             Created: {player.createdAt.toLocaleDateString()}
                           </div>
+                          <div className="text-gray-400">
+                            Commission: {typeof player.percentage === 'number' ? player.percentage : 0}%
+                          </div>
                         </div>
 
                         
@@ -518,7 +530,7 @@ export default function Players() {
                   min="0"
                   max="100"
                   value={newPlayer.percentage}
-                  onChange={(e) => setNewPlayer({ ...newPlayer, percentage: Number(e.target.value) })}
+                  onChange={(e) => setNewPlayer({ ...newPlayer, percentage: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
                   placeholder="Enter clicker percentage"
                   required
