@@ -10,7 +10,8 @@ import {
   LogOut,
   Zap,
   Menu,
-  X
+  X,
+  Briefcase
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -31,6 +32,7 @@ export default function Layout({ children }: LayoutProps) {
   const adminNavItems = [
     { path: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/admin/agents', icon: Users, label: 'Account Holders' },
+    { path: '/admin/brokers', icon: Briefcase, label: 'Brokers' },
     { path: '/admin/accounts', icon: CreditCard, label: 'Accounts' },
     { path: '/admin/players', icon: UserPlus, label: 'Clickers' },
     { path: '/admin/assignments', icon: Settings, label: 'Assignments' },

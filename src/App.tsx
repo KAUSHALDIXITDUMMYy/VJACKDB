@@ -8,6 +8,7 @@ import { useAuth } from './contexts/AuthContext';
 // Admin Pages
 import AdminDashboard from './pages/admin/Dashboard';
 import Agents from './pages/admin/Agents';
+import Brokers from './pages/admin/Broker';
 import Accounts from './pages/admin/Accounts';
 import Players from './pages/admin/Players';
 import Assignments from './pages/admin/Assignments';
@@ -48,6 +49,16 @@ function App() {
               <ProtectedRoute requiredRole="admin">
                 <Layout>
                   <Agents />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/brokers"
+            element={
+              <ProtectedRoute requiredRole="admin">
+                <Layout>
+                  <Brokers />
                 </Layout>
               </ProtectedRoute>
             }

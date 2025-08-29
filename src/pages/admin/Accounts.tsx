@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, deleteDoc, doc, query, where, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Plus, CreditCard, Trash2, Edit, ExternalLink, Save, X, BarChart3, Search, Filter } from 'lucide-react';
+import { Plus, CreditCard, Trash2, Edit, ExternalLink, Save, X, BarChart3, Search, Filter, User, Briefcase } from 'lucide-react';
 
 interface Account {
   id: string;
@@ -16,14 +17,22 @@ interface Account {
   depositAmount?: number;
   agentId: string;
   agentName: string;
+  brokerId?: string;
+  brokerName?: string;
   assignedToPlayerUid?: string;
   assignedToPlayerName?: string;
   status: 'active' | 'inactive' | 'unused';
   createdAt: Date;
-  referralPercentage?: number;  // Add this line
+  referralPercentage?: number;
 }
 
 interface Agent {
+  id: string;
+  name: string;
+  accountCount: number;
+}
+
+interface Broker {
   id: string;
   name: string;
   accountCount: number;
@@ -34,6 +43,7 @@ export default function Accounts() {
   const [filteredAccounts, setFilteredAccounts] = useState<Account[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [brokers, setBrokers] = useState<Broker[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [newAccount, setNewAccount] = useState({
@@ -47,15 +57,18 @@ export default function Accounts() {
     sharePercentage: '',
     depositAmount: '',
     agentId: '',
+    brokerId: '',
     status: 'active' as 'active' | 'inactive' | 'unused'
   });
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive' | 'unused' | 'pph' | 'legal'>('all');
   const [agentFilter, setAgentFilter] = useState<string>('all');
+  const [brokerFilter, setBrokerFilter] = useState<string>('all');
 
   useEffect(() => {
     fetchAccounts();
     fetchAgents();
+    fetchBrokers();
   }, []);
 
   useEffect(() => {
@@ -63,7 +76,7 @@ export default function Accounts() {
     
     if (searchTerm) {
       filtered = filtered.filter(account => {
-        const searchableText = `${account.type === 'pph' ? account.username : account.name} ${account.agentName}`.toLowerCase();
+        const searchableText = `${account.type === 'pph' ? account.username : account.name} ${account.agentName} ${account.brokerName || ''}`.toLowerCase();
         return searchableText.includes(searchTerm.toLowerCase());
       });
     }
@@ -80,8 +93,12 @@ export default function Accounts() {
       filtered = filtered.filter(account => account.agentId === agentFilter);
     }
     
+    if (brokerFilter !== 'all') {
+      filtered = filtered.filter(account => account.brokerId === brokerFilter);
+    }
+    
     setFilteredAccounts(filtered);
-  }, [accounts, searchTerm, filter, agentFilter]);
+  }, [accounts, searchTerm, filter, agentFilter, brokerFilter]);
 
   const fetchAccounts = async () => {
     try {
@@ -90,8 +107,16 @@ export default function Accounts() {
         accountsSnapshot.docs.map(async (accountDoc) => {
           const accountData = accountDoc.data();
           
+          // Fetch agent name
           const agentDoc = await getDocs(query(collection(db, 'agents'), where('__name__', '==', accountData.agentId)));
           const agentName = agentDoc.docs[0]?.data().name || 'Unknown Agent';
+          
+          // Fetch broker name if exists
+          let brokerName = '';
+          if (accountData.brokerId) {
+            const brokerDoc = await getDocs(query(collection(db, 'brokers'), where('__name__', '==', accountData.brokerId)));
+            brokerName = brokerDoc.docs[0]?.data().name || 'Unknown Broker';
+          }
           
           let assignedToPlayerName = '';
           if (accountData.assignedToPlayerUid) {
@@ -122,6 +147,7 @@ export default function Accounts() {
             type: accountData.type || 'pph',
             status,
             agentName,
+            brokerName,
             assignedToPlayerName,
             createdAt: accountData.createdAt?.toDate() || new Date()
           };
@@ -158,6 +184,31 @@ export default function Accounts() {
     }
   };
 
+  const fetchBrokers = async () => {
+    try {
+      const accountsSnapshot = await getDocs(collection(db, 'accounts'));
+      const accountCounts: Record<string, number> = {};
+      
+      accountsSnapshot.forEach(doc => {
+        const brokerId = doc.data().brokerId;
+        if (brokerId) {
+          accountCounts[brokerId] = (accountCounts[brokerId] || 0) + 1;
+        }
+      });
+
+      const brokersSnapshot = await getDocs(collection(db, 'brokers'));
+      const brokersData = brokersSnapshot.docs.map(doc => ({
+        id: doc.id,
+        name: doc.data().name,
+        accountCount: accountCounts[doc.id] || 0
+      })).sort((a, b) => b.accountCount - a.accountCount);
+      
+      setBrokers(brokersData);
+    } catch (error) {
+      console.error('Error fetching brokers:', error);
+    }
+  };
+
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAccount.agentId) return;
@@ -168,6 +219,11 @@ export default function Accounts() {
       status: 'unused', // Always set new accounts as unused
       createdAt: new Date()
     };
+
+    // Add broker if selected
+    if (newAccount.brokerId) {
+      accountData.brokerId = newAccount.brokerId;
+    }
 
     if (newAccount.type === 'pph') {
       if (!newAccount.username || !newAccount.websiteURL || !newAccount.password) return;
@@ -196,12 +252,13 @@ export default function Accounts() {
         sharePercentage: '',
         depositAmount: '',
         agentId: '',
-        status: 'active',
-        referralPercentage: '',  // Add this line
+        brokerId: '',
+        status: 'active'
       });
       setShowModal(false);
       fetchAccounts();
       fetchAgents();
+      fetchBrokers();
     } catch (error) {
       console.error('Error adding account:', error);
     }
@@ -214,6 +271,7 @@ export default function Accounts() {
     const updateData: any = {
       type: editingAccount.type,
       agentId: editingAccount.agentId,
+      brokerId: editingAccount.brokerId || null,
       status: editingAccount.status,
       updatedAt: new Date(),
       referralPercentage: editingAccount.referralPercentage ? Number(editingAccount.referralPercentage) : undefined,
@@ -246,6 +304,7 @@ export default function Accounts() {
         await deleteDoc(doc(db, 'accounts', accountId));
         fetchAccounts();
         fetchAgents();
+        fetchBrokers();
       } catch (error) {
         console.error('Error deleting account:', error);
       }
@@ -355,7 +414,7 @@ export default function Accounts() {
 
         <div className="relative flex-1">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <Filter className="h-5 w-5 text-gray-400" />
+            <User className="h-5 w-5 text-gray-400" />
           </div>
           <select
             value={agentFilter}
@@ -363,7 +422,7 @@ export default function Accounts() {
             className="appearance-none w-full pl-10 pr-8 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 bg-no-repeat bg-[length:20px_20px] bg-[position:right_8px_center]"
             style={{ backgroundImage: dropdownArrowSvg }}
           >
-            <option value="all" className="bg-gray-800 text-white">All Account Holder</option>
+            <option value="all" className="bg-gray-800 text-white">All Account Holders</option>
             {agents.map((agent) => (
               <option 
                 key={agent.id} 
@@ -375,9 +434,33 @@ export default function Accounts() {
             ))}
           </select>
         </div>
+
+        <div className="relative flex-1">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Briefcase className="h-5 w-5 text-gray-400" />
+          </div>
+          <select
+            value={brokerFilter}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setBrokerFilter(e.target.value)}
+            className="appearance-none w-full pl-10 pr-8 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 bg-no-repeat bg-[length:20px_20px] bg-[position:right_8px_center]"
+            style={{ backgroundImage: dropdownArrowSvg }}
+          >
+            <option value="all" className="bg-gray-800 text-white">All Brokers</option>
+            <option value="none" className="bg-gray-800 text-white">No Broker</option>
+            {brokers.map((broker) => (
+              <option 
+                key={broker.id} 
+                value={broker.id}
+                className="bg-gray-800 text-white hover:bg-amber-500"
+              >
+                {broker.name} ({broker.accountCount})
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      <div className="flex space-x-4">
+      <div className="flex space-x-4 flex-wrap gap-2">
         {['all', 'active', 'inactive', 'unused', 'pph', 'legal'].map((filterOption) => (
           <button
             key={filterOption}
@@ -402,7 +485,7 @@ export default function Accounts() {
           <div className="col-span-full text-center py-12">
             <CreditCard className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-400">
-              {searchTerm || filter !== 'all' || agentFilter !== 'all' 
+              {searchTerm || filter !== 'all' || agentFilter !== 'all' || brokerFilter !== 'all' 
                 ? 'No accounts found matching your criteria.' 
                 : 'No accounts found. Create your first account!'}
             </p>
@@ -503,21 +586,43 @@ export default function Accounts() {
                     </>
                   )}
 
-                  <select
-                    value={editingAccount.agentId}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => 
-                      setEditingAccount({ ...editingAccount, agentId: e.target.value })
-                    }
-                    className="appearance-none w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white text-sm pr-8 bg-no-repeat bg-[length:20px_20px] bg-[position:right_8px_center]"
-                    style={{ backgroundImage: dropdownArrowSvg }}
-                  >
-                    <option value="" className="bg-gray-800 text-white">Select Agent</option>
-                    {agents.map((agent) => (
-                      <option key={agent.id} value={agent.id} className="bg-gray-800 text-white hover:bg-cyan-500">
-                        {agent.name} ({agent.accountCount})
-                      </option>
-                    ))}
-                  </select>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Account Holder</label>
+                    <select
+                      value={editingAccount.agentId}
+                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => 
+                        setEditingAccount({ ...editingAccount, agentId: e.target.value })
+                      }
+                      className="appearance-none w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white text-sm pr-8 bg-no-repeat bg-[length:20px_20px] bg-[position:right_8px_center]"
+                      style={{ backgroundImage: dropdownArrowSvg }}
+                    >
+                      <option value="" className="bg-gray-800 text-white">Select Account Holder</option>
+                      {agents.map((agent) => (
+                        <option key={agent.id} value={agent.id} className="bg-gray-800 text-white hover:bg-cyan-500">
+                          {agent.name} ({agent.accountCount})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Broker (Optional)</label>
+                    <select
+                      value={editingAccount.brokerId || ''}
+                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => 
+                        setEditingAccount({ ...editingAccount, brokerId: e.target.value || undefined })
+                      }
+                      className="appearance-none w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white text-sm pr-8 bg-no-repeat bg-[length:20px_20px] bg-[position:right_8px_center]"
+                      style={{ backgroundImage: dropdownArrowSvg }}
+                    >
+                      <option value="" className="bg-gray-800 text-white">No Broker</option>
+                      {brokers.map((broker) => (
+                        <option key={broker.id} value={broker.id} className="bg-gray-800 text-white hover:bg-amber-500">
+                          {broker.name} ({broker.accountCount})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   <div className="flex space-x-2">
                     <button
@@ -565,6 +670,9 @@ export default function Accounts() {
                           </span>
                         </div>
                         <p className="text-sm text-gray-400">Agent: {account.agentName}</p>
+                        {account.brokerName && (
+                          <p className="text-sm text-amber-400">Broker: {account.brokerName}</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
@@ -817,7 +925,7 @@ export default function Accounts() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Account holder
+                  Account Holder
                 </label>
                 <select
                   value={newAccount.agentId}
@@ -832,6 +940,27 @@ export default function Accounts() {
                   {agents.map((agent) => (
                     <option key={agent.id} value={agent.id} className="bg-gray-800 text-white hover:bg-cyan-500">
                       {agent.name} ({agent.accountCount})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Broker (Optional)
+                </label>
+                <select
+                  value={newAccount.brokerId}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => 
+                    setNewAccount({ ...newAccount, brokerId: e.target.value })
+                  }
+                  className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
+                  style={{ backgroundImage: dropdownArrowSvg }}
+                >
+                  <option value="" className="bg-gray-800 text-white">No Broker</option>
+                  {brokers.map((broker) => (
+                    <option key={broker.id} value={broker.id} className="bg-gray-800 text-white hover:bg-amber-500">
+                      {broker.name} ({broker.accountCount})
                     </option>
                   ))}
                 </select>

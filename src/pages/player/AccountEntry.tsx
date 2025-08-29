@@ -3,8 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { collection, addDoc, getDocs, query, where, doc, getDoc, updateDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { useSettings } from '../../contexts/SettingsContext';
-import { ArrowLeft, Save, Calendar, DollarSign, ToggleLeft, ToggleRight, Edit, Trash2, Plus } from 'lucide-react';
+import { ArrowLeft, Save, Calendar, DollarSign, ToggleLeft, ToggleRight, Edit, Trash2, Plus, User, Briefcase } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface Account {
@@ -15,6 +14,8 @@ interface Account {
   websiteURL?: string;
   agentId: string;
   agentName: string;
+  brokerId?: string;
+  brokerName?: string;
   status: 'active' | 'inactive' | 'unused';
   depositAmount?: number;
   referralPercentage?: number;
@@ -35,6 +36,8 @@ interface Entry {
   clickerAmount: number;
   accHolderSettled: string;
   accHolderAmount: number;
+  brokerSettled: string;
+  brokerAmount: number;
   companySettled: string;
   companyAmount: number;
   taxableAmount: number;
@@ -43,13 +46,25 @@ interface Entry {
   notes: string;
 }
 
+interface Broker {
+  id: string;
+  name: string;
+  commissionType: 'percentage' | 'flat' | 'both';
+  commissionPercentage?: number;
+  flatCommission?: number;
+  referralPercentage?: number;
+  referralFlat?: number;
+  specialScenarios: string[];
+}
+
 export default function AccountEntry() {
   const { id } = useParams<{ id: string }>();
   const { userData } = useAuth();
   const navigate = useNavigate();
   const [account, setAccount] = useState<Account | null>(null);
+  const [broker, setBroker] = useState<Broker | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
+  const [editingEntry, setEditingEntry] = useState<Entry | null>(null);  
   const [currentEntry, setCurrentEntry] = useState<Entry>({
     accountId: id || '',
     playerUid: userData?.uid || '',
@@ -64,6 +79,8 @@ export default function AccountEntry() {
     clickerAmount: 0,
     accHolderSettled: 'No',
     accHolderAmount: 0,
+    brokerSettled: 'No',
+    brokerAmount: 0,
     companySettled: 'No',
     companyAmount: 0,
     taxableAmount: 0,
@@ -75,7 +92,7 @@ export default function AccountEntry() {
   const [saving, setSaving] = useState(false);
   const [taxRate, setTaxRate] = useState(10); // Default tax rate
 
- useEffect(() => {
+  useEffect(() => {
     if (id && userData?.uid) {
       fetchAccountData();
       fetchTaxRate();
@@ -92,8 +109,23 @@ export default function AccountEntry() {
       console.error('Error fetching tax rate:', error);
     }
   };
+
+  const fetchBrokerData = async (brokerId: string) => {
+    try {
+      const brokerDoc = await getDoc(doc(db, 'brokers', brokerId));
+      if (brokerDoc.exists()) {
+        setBroker({
+          id: brokerDoc.id,
+          ...brokerDoc.data()
+        } as Broker);
+      }
+    } catch (error) {
+      console.error('Error fetching broker data:', error);
+    }
+  };
+
   // Calculate all amounts whenever relevant fields change
- useEffect(() => {
+  useEffect(() => {
     const calculateAmounts = async () => {
       const profitLoss = 
         (currentEntry.endingBalance || 0) - 
@@ -122,6 +154,19 @@ export default function AccountEntry() {
           ((profitLoss * (agentData.commissionPercentage || 0)) / 100) + 
           (agentData.flatCommission || 0) : 0;
         
+        // Calculate Broker Amount if broker exists
+        let brokerAmount = 0;
+        if (broker && account.brokerId) {
+          if (broker.commissionType === 'percentage') {
+            brokerAmount = (profitLoss * (broker.commissionPercentage || 0)) / 100;
+          } else if (broker.commissionType === 'flat') {
+            brokerAmount = broker.flatCommission || 0;
+          } else if (broker.commissionType === 'both') {
+            brokerAmount = ((profitLoss * (broker.commissionPercentage || 0)) / 100) + 
+                          (broker.flatCommission || 0);
+          }
+        }
+        
         // Calculate Tax Amount using the fetched tax rate
         const taxAmount = (profitLoss * taxRate) / 100;
         
@@ -130,7 +175,7 @@ export default function AccountEntry() {
           (profitLoss * account.referralPercentage) / 100 : 0;
         
         // Calculate Company Amount
-        const companyAmount = profitLoss - clickerAmount - accHolderAmount - taxAmount - referralAmount;
+        const companyAmount = profitLoss - clickerAmount - accHolderAmount - brokerAmount - taxAmount - referralAmount;
         
         // Update all calculated amounts
         setCurrentEntry(prev => ({
@@ -138,6 +183,7 @@ export default function AccountEntry() {
           profitLoss,
           clickerAmount,
           accHolderAmount,
+          brokerAmount,
           companyAmount,
           taxableAmount: taxAmount,
           referralAmount
@@ -155,7 +201,8 @@ export default function AccountEntry() {
     currentEntry.refillAmount,
     account,
     userData,
-    taxRate // Add taxRate to dependencies
+    taxRate,
+    broker
   ]);
 
   // Similar calculation for editing mode
@@ -182,6 +229,19 @@ export default function AccountEntry() {
           ((profitLoss * (agentData.commissionPercentage || 0)) / 100) + 
           (agentData.flatCommission || 0) : 0;
         
+        // Calculate Broker Amount if broker exists
+        let brokerAmount = 0;
+        if (broker && account.brokerId) {
+          if (broker.commissionType === 'percentage') {
+            brokerAmount = (profitLoss * (broker.commissionPercentage || 0)) / 100;
+          } else if (broker.commissionType === 'flat') {
+            brokerAmount = broker.flatCommission || 0;
+          } else if (broker.commissionType === 'both') {
+            brokerAmount = ((profitLoss * (broker.commissionPercentage || 0)) / 100) + 
+                          (broker.flatCommission || 0);
+          }
+        }
+        
         // Calculate Tax Amount using the fetched tax rate
         const taxAmount = (profitLoss * taxRate) / 100;
         
@@ -190,7 +250,7 @@ export default function AccountEntry() {
           (profitLoss * account.referralPercentage) / 100 : 0;
         
         // Calculate Company Amount
-        const companyAmount = profitLoss - clickerAmount - accHolderAmount - taxAmount - referralAmount;
+        const companyAmount = profitLoss - clickerAmount - accHolderAmount - brokerAmount - taxAmount - referralAmount;
         
         // Update all calculated amounts
         setEditingEntry(prev => prev ? ({
@@ -198,6 +258,7 @@ export default function AccountEntry() {
           profitLoss,
           clickerAmount,
           accHolderAmount,
+          brokerAmount,
           companyAmount,
           taxableAmount: taxAmount,
           referralAmount
@@ -215,67 +276,8 @@ export default function AccountEntry() {
     editingEntry?.refillAmount,
     account,
     userData,
-    taxRate // Add taxRate to dependencies
-  ]);
-
-  // Similar calculation for editing mode
-  useEffect(() => {
-    if (!editingEntry || !account || !userData) return;
-    
-    const calculateEditingAmounts = async () => {
-      const profitLoss = 
-        (editingEntry.endingBalance || 0) - 
-        (editingEntry.startingBalance || 0) + 
-        (editingEntry.withdrawal || 0) - 
-        (editingEntry.refillAmount || 0);
-      
-      try {
-        // Calculate Clicker Amount
-        const clickerAmount = (profitLoss * (userData.percentage || 0)) / 100;
-        
-        // Get agent data for commission calculation
-        const agent = await getDoc(doc(db, 'agents', account.agentId));
-        const agentData = agent.data();
-        
-        // Calculate Account Holder Amount
-        const accHolderAmount = agentData ? 
-          ((profitLoss * (agentData.commissionPercentage || 0)) / 100) + 
-          (agentData.flatCommission || 0) : 0;
-        
-        // Fixed tax percentage (removed useSettings)
-        const taxPercentage = 10; // Default 10% tax
-        const taxAmount = (profitLoss * taxPercentage) / 100;
-        
-        // Calculate Referral Amount only if referralPercentage exists
-        const referralAmount = account.referralPercentage ? 
-          (profitLoss * account.referralPercentage) / 100 : 0;
-        
-        // Calculate Company Amount
-        const companyAmount = profitLoss - clickerAmount - accHolderAmount - taxAmount - referralAmount;
-        
-        // Update all calculated amounts
-        setEditingEntry(prev => prev ? ({
-          ...prev,
-          profitLoss,
-          clickerAmount,
-          accHolderAmount,
-          companyAmount,
-          taxableAmount: taxAmount,
-          referralAmount
-        }) : null);
-      } catch (error) {
-        console.error('Error calculating amounts:', error);
-      }
-    };
-
-    calculateEditingAmounts();
-  }, [
-    editingEntry?.startingBalance,
-    editingEntry?.endingBalance,
-    editingEntry?.withdrawal,
-    editingEntry?.refillAmount,
-    account,
-    userData
+    taxRate,
+    broker
   ]);
 
   const fetchAccountData = async () => {
@@ -288,6 +290,15 @@ export default function AccountEntry() {
         
         const agentDoc = await getDoc(doc(db, 'agents', accountData.agentId));
         const agentName = agentDoc.exists() ? agentDoc.data().name : 'Unknown Agent';
+        
+        // Fetch broker data if exists
+        let brokerName = '';
+        if (accountData.brokerId) {
+          const brokerDoc = await getDoc(doc(db, 'brokers', accountData.brokerId));
+          brokerName = brokerDoc.exists() ? brokerDoc.data().name : 'Unknown Broker';
+          // Fetch detailed broker data for calculations
+          await fetchBrokerData(accountData.brokerId);
+        }
         
         // Check if account has any entries to determine status
         let status = accountData.status || 'unused';
@@ -312,6 +323,8 @@ export default function AccountEntry() {
           websiteURL: accountData.websiteURL,
           agentId: accountData.agentId,
           agentName,
+          brokerId: accountData.brokerId,
+          brokerName,
           status,
           depositAmount: accountData.depositAmount,
           referralPercentage: accountData.referralPercentage
@@ -345,7 +358,7 @@ export default function AccountEntry() {
   const handleInputChange = (field: keyof Entry, value: string) => {
     setCurrentEntry(prev => ({
       ...prev,
-      [field]: field === 'startingBalance' || field === 'endingBalance' || field === 'refillAmount' || field === 'withdrawal' || field === 'profitLoss' || field === 'clickerAmount' || field === 'accHolderAmount' || field === 'companyAmount' || field === 'taxableAmount' || field === 'referralAmount'
+      [field]: field === 'startingBalance' || field === 'endingBalance' || field === 'refillAmount' || field === 'withdrawal' || field === 'profitLoss' || field === 'clickerAmount' || field === 'accHolderAmount' || field === 'brokerAmount' || field === 'companyAmount' || field === 'taxableAmount' || field === 'referralAmount'
         ? (value === '' ? '' : Number(value))
         : value
     }));
@@ -354,7 +367,7 @@ export default function AccountEntry() {
   const handleEditInputChange = (field: keyof Entry, value: string) => {
     setEditingEntry(prev => prev ? ({
       ...prev,
-      [field]: field === 'startingBalance' || field === 'endingBalance' || field === 'refillAmount' || field === 'withdrawal' || field === 'profitLoss' || field === 'clickerAmount' || field === 'accHolderAmount' || field === 'companyAmount' || field === 'taxableAmount' || field === 'referralAmount'
+      [field]: field === 'startingBalance' || field === 'endingBalance' || field === 'refillAmount' || field === 'withdrawal' || field === 'profitLoss' || field === 'clickerAmount' || field === 'accHolderAmount' || field === 'brokerAmount' || field === 'companyAmount' || field === 'taxableAmount' || field === 'referralAmount'
         ? (value === '' ? '' : Number(value))
         : value
     }) : null);
@@ -374,6 +387,7 @@ export default function AccountEntry() {
         complianceReview: currentEntry.complianceReview || 'Requested Document',
         clickerAmount: currentEntry.clickerAmount || 0,
         accHolderAmount: currentEntry.accHolderAmount || 0,
+        brokerAmount: currentEntry.brokerAmount || 0,
         companyAmount: currentEntry.companyAmount || 0,
         taxableAmount: currentEntry.taxableAmount || 0,
         referralAmount: currentEntry.referralAmount || 0
@@ -429,6 +443,7 @@ export default function AccountEntry() {
         complianceReview: editingEntry.complianceReview || 'Requested Document',
         clickerAmount: editingEntry.clickerAmount || 0,
         accHolderAmount: editingEntry.accHolderAmount || 0,
+        brokerAmount: editingEntry.brokerAmount || 0,
         companyAmount: editingEntry.companyAmount || 0,
         taxableAmount: editingEntry.taxableAmount || 0,
         referralAmount: editingEntry.referralAmount || 0
@@ -555,7 +570,18 @@ export default function AccountEntry() {
                 {currentEntry.accountStatus.toUpperCase()}
               </span>
             </div>
-            <p className="text-gray-400 mt-1">Agent: {account.agentName}</p>
+            <div className="flex items-center space-x-4 mt-1">
+              <p className="text-gray-400 flex items-center">
+                <User className="w-4 h-4 mr-1" />
+                Agent: {account.agentName}
+              </p>
+              {account.brokerName && (
+                <p className="text-amber-400 flex items-center">
+                  <Briefcase className="w-4 h-4 mr-1" />
+                  Broker: {account.brokerName}
+                </p>
+              )}
+            </div>
             {account.type === 'legal' && account.depositAmount && (
               <p className="text-sm text-cyan-400">Starting Balance: ${account.depositAmount.toLocaleString()}</p>
             )}
@@ -702,6 +728,26 @@ export default function AccountEntry() {
             
             {renderAmountInput('Clicker Amount', currentEntry.clickerAmount)}
             {renderAmountInput('Account Holder Amount', currentEntry.accHolderAmount)}
+            
+            {account.brokerId && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Broker Settled
+                  </label>
+                  <select
+                    value={currentEntry.brokerSettled}
+                    onChange={(e) => handleInputChange('brokerSettled', e.target.value)}
+                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:bg-gray-800"
+                  >
+                    <option className="bg-gray-800 text-white" value="No">No</option>
+                    <option className="bg-gray-800 text-white" value="Yes">Yes</option>
+                  </select>
+                </div>
+                {renderAmountInput('Broker Amount', currentEntry.brokerAmount)}
+              </>
+            )}
+            
             {renderAmountInput('Company Amount', currentEntry.companyAmount, true, currentEntry.companyAmount >= 0)}
             {renderAmountInput('Taxable Amount', currentEntry.taxableAmount, true, false)}
             {account?.referralPercentage && renderAmountInput('Referral Amount', currentEntry.referralAmount)}
@@ -824,6 +870,7 @@ export default function AccountEntry() {
                       {renderAmountInput('Profit/Loss', editingEntry.profitLoss, true, editingEntry.profitLoss >= 0)}
                       {renderAmountInput('Clicker Amount', editingEntry.clickerAmount)}
                       {renderAmountInput('Account Holder Amount', editingEntry.accHolderAmount)}
+                      {account.brokerId && renderAmountInput('Broker Amount', editingEntry.brokerAmount)}
                       {renderAmountInput('Company Amount', editingEntry.companyAmount, true, editingEntry.companyAmount >= 0)}
                       {renderAmountInput('Taxable Amount', editingEntry.taxableAmount, true, false)}
                       {account?.referralPercentage && renderAmountInput('Referral Amount', editingEntry.referralAmount)}
