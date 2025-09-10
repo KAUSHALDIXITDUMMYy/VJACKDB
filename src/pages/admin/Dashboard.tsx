@@ -35,6 +35,8 @@ interface PlayerStats {
   accountCount: number;
   totalProfit: number;
   totalEntries: number;
+  percentage?: number;
+  totalClickerCommission: number;
 }
 
 interface AccountStats {
@@ -543,6 +545,13 @@ export default function Dashboard() {
           const playerAccounts = accounts.filter((acc: any) => acc.assignedToPlayerUid === player.uid);
           const playerEntries = entries.filter((entry: any) => entry.playerUid === player.uid);
           const playerProfit = playerEntries.reduce((sum, entry) => sum + (entry.profitLoss || 0), 0);
+          const pct = typeof player.percentage === 'number' ? player.percentage : 0;
+          const totalClickerCommission = playerEntries.reduce((sum, entry) => {
+            const clickerAmt = typeof entry.clickerAmount === 'number'
+              ? entry.clickerAmount
+              : ((entry.profitLoss || 0) * (pct / 100));
+            return sum + (clickerAmt || 0);
+          }, 0);
 
           return {
             uid: player.uid,
@@ -550,7 +559,9 @@ export default function Dashboard() {
             email: player.email,
             accountCount: playerAccounts.length,
             totalProfit: playerProfit,
-            totalEntries: playerEntries.length
+            totalEntries: playerEntries.length,
+            percentage: pct,
+            totalClickerCommission
           };
         })
       );
@@ -1151,7 +1162,7 @@ export default function Dashboard() {
                       <h3 className="text-lg font-semibold text-white">{player.name}</h3>
                       <p className="text-sm text-gray-400">{player.email}</p>
                     </div>
-                    <div className="grid grid-cols-3 gap-4 lg:gap-6 text-center">
+                    <div className="grid grid-cols-4 gap-4 lg:gap-6 text-center">
                       <div>
                         <p className="text-sm text-gray-400">Assigned Accounts</p>
                         <p className="text-lg lg:text-xl font-bold text-cyan-400">{player.accountCount}</p>
@@ -1164,6 +1175,12 @@ export default function Dashboard() {
                         <p className="text-sm text-gray-400">Total Profit</p>
                         <p className={`text-lg lg:text-xl font-bold ${player.totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           ${player.totalProfit.toLocaleString()}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-400">Clicker Commission</p>
+                        <p className="text-lg lg:text-xl font-bold text-yellow-400">
+                          ${player.totalClickerCommission.toLocaleString()}
                         </p>
                       </div>
                     </div>

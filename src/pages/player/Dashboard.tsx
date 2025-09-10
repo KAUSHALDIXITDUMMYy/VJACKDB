@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, where, orderBy, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, updateDoc, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { CreditCard, TrendingUp, DollarSign, Calendar, ExternalLink, Filter, Edit, Trash2, Save, X } from 'lucide-react';
+import { CreditCard, TrendingUp, Calendar, ExternalLink, Filter, Edit, Trash2, Save, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface Account {
@@ -228,6 +228,7 @@ export default function PlayerDashboard() {
               <p className="text-xs lg:text-sm text-gray-400">Total Profit/Loss (Company)</p>
               <p className={`text-xl lg:text-2xl font-bold ${totalProfit >= 0 ? 'text-cyberpunk-green' : 'text-cyberpunk-red'}`}>${totalProfit.toLocaleString()}</p>
               <p className="text-xs lg:text-sm text-gray-400 mt-1">Your Share ({playerPercentage}%): <span className={`font-bold ${playerShare >= 0 ? 'text-cyberpunk-green' : 'text-cyberpunk-red'}`}>${playerShare.toLocaleString()}</span></p>
+              <p className="text-xs lg:text-sm text-gray-400">Clicker Commission ({playerPercentage}% of Gross): <span className={`font-bold ${playerShare >= 0 ? 'text-cyberpunk-green' : 'text-cyberpunk-red'}`}>${playerShare.toLocaleString()}</span></p>
             </div>
             <TrendingUp className="w-6 h-6 lg:w-8 lg:h-8 text-cyberpunk-violet" />
           </div>
