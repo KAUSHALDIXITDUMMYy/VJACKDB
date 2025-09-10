@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Plus, Users, Trash2, Edit, Save, X, Search, Briefcase, Percent, DollarSign } from 'lucide-react';
+import { Plus, Trash2, Edit, Save, X, Search, Briefcase } from 'lucide-react';
 
 interface Broker {
   id: string;
@@ -21,7 +21,15 @@ export default function Brokers() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingBroker, setEditingBroker] = useState<Broker | null>(null);
-  const [newBroker, setNewBroker] = useState({
+  const [newBroker, setNewBroker] = useState<{
+    name: string;
+    commissionType: 'percentage' | 'flat' | 'both';
+    commissionPercentage: string;
+    flatCommission: string;
+    referralPercentage: string;
+    referralFlat: string;
+    specialScenarios: string[];
+  }>({
     name: '',
     commissionType: 'both',
     commissionPercentage: '',
@@ -225,9 +233,9 @@ export default function Brokers() {
                       })}
                       className="w-full px-3 py-2 bg-white/5 border border-orange-500/20 rounded-lg text-white"
                     >
-                      <option value="percentage">Percentage Only</option>
-                      <option value="flat">Flat Only</option>
-                      <option value="both">Both Percentage and Flat</option>
+                      <option className="text-gray-900" value="percentage">Percentage Only</option>
+                      <option className="text-gray-900" value="flat">Flat Only</option>
+                      <option className="text-gray-900" value="both">Both Percentage and Flat</option>
                     </select>
                   </div>
                   
@@ -243,7 +251,7 @@ export default function Brokers() {
                           value={editingBroker.commissionPercentage || ''}
                           onChange={(e) => setEditingBroker({ ...editingBroker, commissionPercentage: parseFloat(e.target.value) || 0 })}
                           className="w-full px-3 py-2 pr-8 bg-white/5 border border-orange-500/20 rounded-lg text-white"
-                          required={editingBroker.commissionType !== 'flat'}
+                          required={true}
                         />
                         <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">%</span>
                       </div>
@@ -261,7 +269,7 @@ export default function Brokers() {
                           value={editingBroker.flatCommission || ''}
                           onChange={(e) => setEditingBroker({ ...editingBroker, flatCommission: parseFloat(e.target.value) || 0 })}
                           className="w-full px-3 py-2 pr-8 bg-white/5 border border-orange-500/20 rounded-lg text-white"
-                          required={editingBroker.commissionType !== 'percentage'}
+                          required={true}
                         />
                         <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">$</span>
                       </div>
@@ -432,9 +440,9 @@ export default function Brokers() {
                   })}
                   className="w-full px-4 py-3 bg-white/5 border border-orange-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
                 >
-                  <option value="percentage">Percentage Only</option>
-                  <option value="flat">Flat Only</option>
-                  <option value="both">Both Percentage and Flat</option>
+                  <option className="text-gray-900" value="percentage">Percentage Only</option>
+                  <option className="text-gray-900" value="flat">Flat Only</option>
+                  <option className="text-gray-900" value="both">Both Percentage and Flat</option>
                 </select>
               </div>
               
@@ -453,7 +461,7 @@ export default function Brokers() {
                       onChange={(e) => setNewBroker({ ...newBroker, commissionPercentage: e.target.value })}
                       className="w-full px-4 py-3 pr-8 bg-white/5 border border-orange-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
                       placeholder="Enter commission percentage"
-                      required={newBroker.commissionType !== 'flat'}
+                      required={true}
                     />
                     <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">%</span>
                   </div>
@@ -474,7 +482,7 @@ export default function Brokers() {
                       onChange={(e) => setNewBroker({ ...newBroker, flatCommission: e.target.value })}
                       className="w-full px-4 py-3 pr-8 bg-white/5 border border-orange-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
                       placeholder="Enter flat commission amount"
-                      required={newBroker.commissionType !== 'percentage'}
+                      required={true}
                     />
                     <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">$</span>
                   </div>

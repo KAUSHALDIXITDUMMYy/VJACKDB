@@ -1162,7 +1162,7 @@ export default function Dashboard() {
                       <h3 className="text-lg font-semibold text-white">{player.name}</h3>
                       <p className="text-sm text-gray-400">{player.email}</p>
                     </div>
-                    <div className="grid grid-cols-4 gap-4 lg:gap-6 text-center">
+                    <div className="grid grid-cols-3 gap-4 lg:gap-6 text-center">
                       <div>
                         <p className="text-sm text-gray-400">Assigned Accounts</p>
                         <p className="text-lg lg:text-xl font-bold text-cyan-400">{player.accountCount}</p>
@@ -1170,12 +1170,6 @@ export default function Dashboard() {
                       <div>
                         <p className="text-sm text-gray-400">Total Entries</p>
                         <p className="text-lg lg:text-xl font-bold text-purple-400">{player.totalEntries}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-400">Total Profit</p>
-                        <p className={`text-lg lg:text-xl font-bold ${player.totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          ${player.totalProfit.toLocaleString()}
-                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Clicker Commission</p>
