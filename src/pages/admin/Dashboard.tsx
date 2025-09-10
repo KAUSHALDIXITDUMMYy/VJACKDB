@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, where, orderBy, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, doc, getDoc, setDoc, addDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { useSettings } from '../../contexts/SettingsContext';
-import { Users, CreditCard, UserPlus, TrendingUp, Calendar, Filter, BarChart3, Eye, Search, Settings, Download } from 'lucide-react';
+import { Users, CreditCard, UserPlus, Calendar, Filter, BarChart3, Settings, Download } from 'lucide-react';
 import { format, subDays, startOfDay, endOfDay, parseISO } from 'date-fns';
 import * as XLSX from 'xlsx';
 
@@ -55,6 +54,9 @@ interface EntryData {
   accountId: string;
   accountName: string;
   accountType: string;
+  accHolderName?: string;
+  accNumber?: string;
+  brokerName?: string;
   playerName: string;
   playerUid: string;
   startingBalance: number;
@@ -100,6 +102,8 @@ export default function Dashboard() {
   const [showTaxModal, setShowTaxModal] = useState(false);
   const [newTaxRate, setNewTaxRate] = useState(10);
   const [isUpdatingTax, setIsUpdatingTax] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState('');
 
   useEffect(() => {
     fetchStats();
@@ -119,6 +123,253 @@ export default function Dashboard() {
     }
   };
 
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportStatus('Reading file...');
+    try {
+      const text = await file.text();
+      const lines = text.replace(/\uFEFF/g, '').split(/\r?\n/).filter(l => l.trim().length > 0);
+      if (lines.length < 2) {
+        setImportStatus('No data rows found.');
+        setIsImporting(false);
+        return;
+      }
+
+      const header = lines[0].split(/\t/).map(h => h.trim());
+      const rows = lines.slice(1).map(line => line.split(/\t/));
+
+      // Helpers
+      const money = (val: any): number => {
+        if (val === undefined || val === null) return 0;
+        if (typeof val === 'number') return val;
+        const s = String(val).trim();
+        if (!s) return 0;
+        const sign = s.includes('(') && s.includes(')') ? -1 : 1;
+        const cleaned = s.replace(/[^0-9\.-]/g, '');
+        const num = parseFloat(cleaned || '0');
+        return sign * (isNaN(num) ? 0 : num);
+      };
+
+      const parseDate = (raw: any): string => {
+        if (!raw) return format(new Date(), 'yyyy-MM-dd');
+        let s = String(raw).trim();
+        if (!s) return format(new Date(), 'yyyy-MM-dd');
+        s = s.replace(/(st|nd|rd|th)/gi, '');
+        const parts = s.split(/\s+/).filter(Boolean);
+        const monthMap: Record<string, number> = {
+          jan: 0, january: 0,
+          feb: 1, february: 1,
+          mar: 2, march: 2,
+          apr: 3, april: 3,
+          may: 4,
+          jun: 5, june: 5,
+          jul: 6, july: 6,
+          aug: 7, august: 7,
+          sep: 8, sept: 8, september: 8,
+          oct: 9, october: 9,
+          nov: 10, november: 10,
+          dec: 11, december: 11
+        };
+        let day = new Date().getDate();
+        let month = new Date().getMonth();
+        let year = new Date().getFullYear();
+        if (parts.length >= 2) {
+          const maybeDay = parseInt(parts[0], 10);
+          const maybeMonth = monthMap[parts[1].toLowerCase()] ?? monthMap[parts[1].slice(0,3).toLowerCase()];
+          if (!isNaN(maybeDay)) day = maybeDay;
+          if (typeof maybeMonth === 'number') month = maybeMonth;
+          if (parts[2]) {
+            const maybeYear = parseInt(parts[2], 10);
+            if (!isNaN(maybeYear) && maybeYear > 1990 && maybeYear < 2100) year = maybeYear;
+          }
+        }
+        const d = new Date(year, month, day);
+        return format(d, 'yyyy-MM-dd');
+      };
+
+      const getVal = (obj: Record<string, any>, keys: string[], fallback: any = ''): any => {
+        for (const k of keys) {
+          if (k in obj && obj[k] !== '' && obj[k] !== undefined) return obj[k];
+        }
+        return fallback;
+      };
+
+      const toObj = (arr: string[]) => {
+        const obj: Record<string, any> = {};
+        header.forEach((h, i) => { obj[h] = (arr[i] ?? '').trim(); });
+        return obj;
+      };
+
+      const toEmail = (name: string): string => {
+        const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 64);
+        return `${base}@vjack.com`;
+      };
+
+      setImportStatus('Fetching existing agents/brokers/players cache...');
+      const agentsSnapshot = await getDocs(collection(db, 'agents'));
+      const brokersSnapshot = await getDocs(collection(db, 'brokers'));
+      const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'player')));
+
+      const agentNameToId = new Map<string, string>();
+      agentsSnapshot.forEach(d => agentNameToId.set((d.data().name || '').toString().trim().toLowerCase(), d.id));
+      const brokerNameToId = new Map<string, string>();
+      brokersSnapshot.forEach(d => brokerNameToId.set((d.data().name || '').toString().trim().toLowerCase(), d.id));
+      const playerNameToUid = new Map<string, string>();
+      usersSnapshot.forEach(d => playerNameToUid.set((d.data().name || '').toString().trim().toLowerCase(), (d.data() as any).uid));
+
+      const safeId = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+      let processed = 0;
+      for (const row of rows) {
+        const obj = toObj(row);
+        const accHolderName = (getVal(obj, ['Acc holder name', 'Acc holder', 'Account Holder', 'Accs Holder name']) || '').toString().trim();
+        if (!accHolderName) continue;
+        const agentKey = accHolderName.toLowerCase();
+
+        // Ensure agent
+        let agentId = agentNameToId.get(agentKey);
+        if (!agentId) {
+          const agentDoc = await addDoc(collection(db, 'agents'), {
+            name: accHolderName,
+            commissionPercentage: 0,
+            flatCommission: 0,
+            createdAt: new Date(),
+            phone: (obj['Number'] || '').toString().trim()
+          });
+          agentId = agentDoc.id;
+          agentNameToId.set(agentKey, agentId);
+        }
+
+        // Ensure broker (optional)
+        const brokerNameRaw = (getVal(obj, ['Brokered By', 'Broker', 'Brokered']) || '').toString().trim();
+        let brokerId: string | undefined = undefined;
+        if (brokerNameRaw) {
+          const brokerKey = brokerNameRaw.toLowerCase();
+          brokerId = brokerNameToId.get(brokerKey);
+          if (!brokerId) {
+            const brokerDoc = await addDoc(collection(db, 'brokers'), {
+              name: brokerNameRaw,
+              commissionType: 'both',
+              commissionPercentage: 0,
+              flatCommission: 0,
+              createdAt: new Date(),
+              specialScenarios: []
+            });
+            brokerId = brokerDoc.id;
+            brokerNameToId.set(brokerKey, brokerId);
+          }
+        }
+
+        // Build account id and upsert account
+        const accNumber = (obj['Number'] || '').toString().trim();
+        const startDate = parseDate(getVal(obj, ['Start date', 'Start Date', 'Start']));
+        const accountDocId = `import-${safeId(accHolderName)}-${safeId(accNumber || 'na')}-${startDate}`;
+        const startingBalance = money(getVal(obj, ['Starting balance', 'Accs Holder existing balance']));
+
+        // Determine clicker/player by name (no stub creation)
+        const clickerNameRaw = (getVal(obj, ['Clicker Name', 'Clicker', 'Clicker Name ']) || '').toString().trim();
+        let assignedToPlayerUid = clickerNameRaw ? (playerNameToUid.get(clickerNameRaw.toLowerCase()) || null) : null;
+
+        // Ensure an inactive player record exists if user not found (no stub uid creation)
+        if (clickerNameRaw && !assignedToPlayerUid) {
+          try {
+            const existingPlayersSnap = await getDocs(query(collection(db, 'players'), where('name', '==', clickerNameRaw)));
+            if (existingPlayersSnap.empty) {
+              await addDoc(collection(db, 'players'), {
+                name: clickerNameRaw,
+                email: toEmail(clickerNameRaw),
+                password: 'vjack@123',
+                role: 'player',
+                status: 'pending',
+                percentage: 50,
+                createdAt: new Date()
+              });
+            }
+          } catch (e) {
+            console.error('Error ensuring inactive player:', e);
+          }
+        }
+
+        await setDoc(doc(db, 'accounts', accountDocId), {
+          type: 'legal',
+          name: accNumber ? `${accHolderName} (${accNumber})` : accHolderName,
+          agentId,
+          brokerId: brokerId || null,
+          status: assignedToPlayerUid ? 'active' : 'unused',
+          depositAmount: startingBalance,
+          assignedToPlayerUid,
+          createdAt: new Date()
+        }, { merge: true });
+
+        // Ensure clicker percentage = 50% if we have an assigned user
+        if (assignedToPlayerUid) {
+          try {
+            const uSnap = await getDocs(query(collection(db, 'users'), where('uid', '==', assignedToPlayerUid)));
+            if (!uSnap.empty) {
+              const userDocRef = doc(db, 'users', uSnap.docs[0].id);
+              const existing = uSnap.docs[0].data() as any;
+              if (typeof existing.percentage !== 'number' || existing.percentage <= 0) {
+                await updateDoc(userDocRef, { percentage: 50, updatedAt: new Date() });
+              }
+            }
+          } catch (e) {
+            console.error('Error setting player percentage:', e);
+          }
+        }
+
+        // Prepare entry
+        const endDate = parseDate(getVal(obj, ['Settled Date', 'End Date', 'End date', 'End Date ' , 'End']));
+        const endingBalance = money(getVal(obj, ['Ending Balance', 'Ending balance']));
+        const refillAmountsKeys = header.filter(h => /refill \$/i.test(h));
+        const refillAmount = refillAmountsKeys.reduce((sum, k) => sum + money(obj[k]), 0);
+        const grossProfit = money(getVal(obj, ['Gross Profit', 'Gross']));
+        const taxAmount = money(getVal(obj, ['30% tax', 'Tax']));
+        const companyAmount = money(getVal(obj, ['JACK', 'Company Way']));
+        const clickerAmount = money(getVal(obj, ['Clicker Way 50% Fix', 'Clicker Way']));
+        const accHolderAmount = money(getVal(obj, ['Accs Holder Way']));
+        const referralAmount = money(getVal(obj, ['Referral Way']));
+        const brokerAmount = money(getVal(obj, ['Broker Way']));
+        const notes = (getVal(obj, ['Notes , in between settlement', 'Notes']) || '').toString();
+
+        const entryDocId = `import-${accountDocId}-${endDate}`;
+        await setDoc(doc(db, 'entries', entryDocId), {
+          accountId: accountDocId,
+          playerUid: assignedToPlayerUid || 'import',
+          date: endDate,
+          startingBalance,
+          endingBalance,
+          refillAmount,
+          withdrawal: 0,
+          profitLoss: grossProfit || (endingBalance - startingBalance - refillAmount),
+          clickerAmount,
+          accHolderAmount,
+          companyAmount,
+          taxableAmount: taxAmount,
+          referralAmount,
+          brokerAmount,
+          accountStatus: assignedToPlayerUid ? 'active' : 'unused',
+          complianceReview: 'N/A',
+          notes,
+          createdAt: new Date()
+        }, { merge: true });
+
+        processed += 1;
+        if (processed % 10 === 0) setImportStatus(`Imported ${processed} rows...`);
+      }
+
+      setImportStatus(`Import complete. Processed ${processed} rows.`);
+      fetchStats();
+    } catch (err) {
+      console.error(err);
+      setImportStatus('Import failed. See console for details.');
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
+  };
   const updateTaxRate = async () => {
     if (!newTaxRate || isNaN(Number(newTaxRate))) {
       return;
@@ -162,16 +413,16 @@ export default function Dashboard() {
       const totalAgents = agentsSnapshot.size;
       const agents = agentsSnapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
-      }));
+        ...(doc.data() as any)
+      })) as any[];
 
       // Fetch accounts
       const accountsSnapshot = await getDocs(collection(db, 'accounts'));
       const totalAccounts = accountsSnapshot.size;
       const accounts = accountsSnapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
-      }));
+        ...(doc.data() as any)
+      })) as any[];
       const activeAccounts = accounts.filter(acc => acc.status === 'active').length;
       const inactiveAccounts = accounts.filter(acc => acc.status === 'inactive').length;
       const pphAccounts = accounts.filter(acc => acc.type === 'pph').length;
@@ -182,9 +433,16 @@ export default function Dashboard() {
       const playersSnapshot = await getDocs(playersQuery);
       const totalPlayers = playersSnapshot.size;
       const players = playersSnapshot.docs.map(doc => ({
-        uid: doc.data().uid,
-        ...doc.data()
-      }));
+        uid: (doc.data() as any).uid,
+        ...(doc.data() as any)
+      })) as any[];
+
+      // Fetch brokers for name lookup
+      const brokersSnapshot = await getDocs(collection(db, 'brokers'));
+      const brokers = brokersSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as any)
+      })) as any[];
 
       // Fetch entries for the selected date range
       const entriesQuery = query(
@@ -197,8 +455,8 @@ export default function Dashboard() {
       const totalTransactions = entriesSnapshot.size;
       const entries = entriesSnapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
-      }));
+        ...(doc.data() as any)
+      })) as any[];
 
       // Calculate total profit
       let totalProfit = 0;
@@ -208,9 +466,24 @@ export default function Dashboard() {
 
       // Prepare entry data for export
       const entriesData: EntryData[] = await Promise.all(
-        entries.map(async (entry) => {
-          const account = accounts.find(acc => acc.id === entry.accountId);
-          const player = players.find(p => p.uid === entry.playerUid);
+        entries.map(async (entry: any) => {
+          const account = accounts.find((acc: any) => acc.id === entry.accountId);
+          const player = players.find((p: any) => p.uid === entry.playerUid);
+          let accHolderName = 'Unknown Account Holder';
+          let accNumber = '';
+          let brokerName = '';
+          if (account) {
+            const agent = agents.find((a: any) => a.id === account.agentId);
+            accHolderName = agent?.name || accHolderName;
+            if (account.type === 'legal' && typeof account.name === 'string') {
+              const m = account.name.match(/\(([^)]+)\)/);
+              accNumber = m ? m[1] : '';
+            }
+            if (account.brokerId) {
+              const broker = brokers.find((b: any) => b.id === account.brokerId);
+              brokerName = broker?.name || '';
+            }
+          }
           
           return {
             id: entry.id,
@@ -218,6 +491,9 @@ export default function Dashboard() {
             accountId: entry.accountId,
             accountName: account ? (account.type === 'pph' ? account.username : account.name) : 'Unknown Account',
             accountType: account?.type || 'pph',
+            accHolderName,
+            accNumber,
+            brokerName,
             playerName: player?.name || 'Unknown Player',
             playerUid: entry.playerUid,
             startingBalance: entry.startingBalance || 0,
@@ -240,8 +516,8 @@ export default function Dashboard() {
 
       // Calculate agent stats
       const agentStatsData: AgentStats[] = await Promise.all(
-        agents.map(async (agent) => {
-          const agentAccounts = accounts.filter(acc => acc.agentId === agent.id);
+        agents.map(async (agent: any) => {
+          const agentAccounts = accounts.filter((acc: any) => acc.agentId === agent.id);
           const assignedPlayerUids = [...new Set(agentAccounts.map(acc => acc.assignedToPlayerUid).filter(Boolean))];
 
           const agentEntries = entries.filter(entry =>
@@ -255,17 +531,17 @@ export default function Dashboard() {
             accountCount: agentAccounts.length,
             playerCount: assignedPlayerUids.length,
             totalProfit: agentProfit,
-            commissionPercentage: agent.commissionPercentage || 0,
-            flatCommission: agent.flatCommission || 0
+            commissionPercentage: (agent as any).commissionPercentage || 0,
+            flatCommission: (agent as any).flatCommission || 0
           };
         })
       );
 
       // Calculate player stats
       const playerStatsData: PlayerStats[] = await Promise.all(
-        players.map(async (player) => {
-          const playerAccounts = accounts.filter(acc => acc.assignedToPlayerUid === player.uid);
-          const playerEntries = entries.filter(entry => entry.playerUid === player.uid);
+        players.map(async (player: any) => {
+          const playerAccounts = accounts.filter((acc: any) => acc.assignedToPlayerUid === player.uid);
+          const playerEntries = entries.filter((entry: any) => entry.playerUid === player.uid);
           const playerProfit = playerEntries.reduce((sum, entry) => sum + (entry.profitLoss || 0), 0);
 
           return {
@@ -281,17 +557,17 @@ export default function Dashboard() {
 
       // Calculate account stats
       const accountStatsData: AccountStats[] = await Promise.all(
-        accounts.map(async (account) => {
-          const agent = agents.find(a => a.id === account.agentId);
+        accounts.map(async (account: any) => {
+          const agent = agents.find((a: any) => a.id === account.agentId);
           const agentName = agent?.name || 'Unknown Agent';
 
           let assignedToPlayerName = '';
           if (account.assignedToPlayerUid) {
-            const player = players.find(p => p.uid === account.assignedToPlayerUid);
+            const player = players.find((p: any) => p.uid === account.assignedToPlayerUid);
             assignedToPlayerName = player?.name || 'Unknown Player';
           }
 
-          const accountEntries = entries.filter(entry => entry.accountId === account.id);
+          const accountEntries = entries.filter((entry: any) => entry.accountId === account.id);
           const accountProfit = accountEntries.reduce((sum, entry) => sum + (entry.profitLoss || 0), 0);
 
           return {
@@ -386,28 +662,63 @@ export default function Dashboard() {
 
     switch (viewMode) {
       case 'overview':
-        // Export all entries for the selected date range
-        dataToExport = allEntries.map(entry => ({
-          Date: entry.date,
-          'Account ID': entry.accountId,
-          'Account Name': entry.accountName,
-          'Account Type': entry.accountType.toUpperCase(),
-          'Player Name': entry.playerName,
-          'Starting Balance': entry.startingBalance,
-          'Ending Balance': entry.endingBalance,
-          'Refill Amount': entry.refillAmount,
-          Withdrawal: entry.withdrawal,
-          'Profit/Loss': entry.profitLoss,
-          'Clicker Amount': entry.clickerAmount,
-          'Account Holder Amount': entry.accHolderAmount,
-          'Company Amount': entry.companyAmount,
-          'Taxable Amount': entry.taxableAmount,
-          'Referral Amount': entry.referralAmount,
-          'Account Status': entry.accountStatus.toUpperCase(),
-          'Compliance Review': entry.complianceReview,
-          Notes: entry.notes
-        }));
-        fileName = `Entries_${format(new Date(), 'yyyyMMdd_HHmmss')}`;
+        // Export with the exact format/columns of the provided TXT file
+        dataToExport = allEntries.map((entry, idx) => {
+          const endDate = entry.date || '';
+          const startDate = '';
+          const netProfit = (entry.profitLoss || 0) - (entry.taxableAmount || 0);
+          return {
+            'Sr No': idx + 1,
+            'Acc holder name': entry.accHolderName || '',
+            'Number': entry.accNumber || '',
+            'Funded By': '',
+            'Brokered By': entry.brokerName || '',
+            'Referred By': '',
+            'Start date': startDate,
+            'End Date': endDate,
+            'Withdrawal submitted': '',
+            'Starting balance': entry.startingBalance || 0,
+            'Refill By 1': '',
+            'Refill $': entry.refillAmount || 0,
+            'Refill By 2': '',
+            'Refill $ ': '',
+            'Refill By 2 ': '',
+            'Refill $  ': '',
+            'Promo $': '',
+            'Accs Holder existing balance': entry.startingBalance || 0,
+            'Ending Balance': entry.endingBalance || 0,
+            'Gross Profit': entry.profitLoss || 0,
+            '30% tax': entry.taxableAmount || 0,
+            'JACK': entry.companyAmount || 0,
+            'Net Profit': netProfit,
+            'Settled $': '',
+            'Settled Date': endDate,
+            'Company Way': entry.companyAmount || 0,
+            'Clicker Name': entry.playerName || '',
+            'Clicker Way 50% Fix': entry.clickerAmount || 0,
+            'Accs Holder Way': entry.accHolderAmount || 0,
+            'Accs Holder promo $150': '',
+            'Referral Way': entry.referralAmount || 0,
+            'Broker Way': (entry as any).brokerAmount || 0,
+            'Funder Way': '',
+            'Company Funded': '',
+            'initials Returned Out ': '',
+            'Payment $': '',
+            'Payment Methods ': '',
+            'Payment $  ': '',
+            'Payment Methods  ': '',
+            'Payment $   ': '',
+            'Payment Methods   ': '',
+            'Payment $    ': '',
+            'Payment Methods    ': '',
+            'Date ': endDate,
+            'Total Recived': '',
+            'Total Paid': '',
+            'ALL clear': '',
+            'Notes , in between settlement ': entry.notes || ''
+          };
+        });
+        fileName = `VJACK_Export_${format(new Date(), 'yyyyMMdd_HHmmss')}`;
         break;
       case 'agents':
         dataToExport = agentStats.map(agent => ({
@@ -601,7 +912,7 @@ export default function Dashboard() {
       )}
       
       {/* View Mode Selector */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 items-center">
         {[
           { key: 'overview', label: 'Overview', icon: BarChart3 },
           { key: 'agents', label: 'Account Holder Dashboard', icon: Users },
@@ -633,6 +944,15 @@ export default function Dashboard() {
           <Download className="w-4 h-4 lg:w-5 lg:h-5" />
           <span className="text-sm lg:text-base">Export to Excel</span>
         </button>
+        {/* Import Button */}
+        <label className="flex items-center space-x-2 px-3 lg:px-4 py-2 rounded-lg transition-all duration-200 bg-green-500/10 text-green-400 hover:bg-green-500/20 hover:text-green-300 cursor-pointer">
+          <input type="file" accept=".txt,.tsv,.csv" className="hidden" onChange={handleImportFile} />
+          <Download className="w-4 h-4 lg:w-5 lg:h-5" />
+          <span className="text-sm lg:text-base">Import TSV</span>
+        </label>
+        {importStatus && (
+          <span className="text-xs text-gray-400">{isImporting ? importStatus : importStatus}</span>
+        )}
       </div>
 
       {viewMode === 'overview' && (

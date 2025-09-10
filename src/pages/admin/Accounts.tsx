@@ -124,21 +124,21 @@ export default function Accounts() {
             assignedToPlayerName = playerDoc.docs[0]?.data().name || 'Unknown Player';
           }
           
-          // Check if account has any entries and is assigned to determine status
+          // Determine status: assigned accounts are active; otherwise unused unless explicitly inactive
           const entriesQuery = query(collection(db, 'entries'), where('accountId', '==', accountDoc.id));
           const entriesSnapshot = await getDocs(entriesQuery);
           
           let status = accountData.status || 'unused';
-          // If account has no entries or no player assigned, mark as unused
-          if (entriesSnapshot.size === 0 || !accountData.assignedToPlayerUid) {
-            status = 'unused';
-          } else if (status === 'unused') {
-            // If account has entries and is assigned but marked as unused, update to active
+          if (accountData.assignedToPlayerUid) {
             status = 'active';
-            await updateDoc(doc(db, 'accounts', accountDoc.id), {
-              status: 'active',
-              updatedAt: new Date()
-            });
+            if (accountData.status !== 'active') {
+              await updateDoc(doc(db, 'accounts', accountDoc.id), {
+                status: 'active',
+                updatedAt: new Date()
+              });
+            }
+          } else if (entriesSnapshot.size === 0) {
+            status = 'unused';
           }
           
           return {
@@ -831,26 +831,7 @@ export default function Accounts() {
                       placeholder="Enter IP address"
                     />
                   </div>
-                  {newAccount.type === 'pph' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">
-                        Referral Percentage (Optional)
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="100"
-                          value={newAccount.referralPercentage}
-                          onChange={(e) => setNewAccount({ ...newAccount, referralPercentage: e.target.value })}
-                          className="w-full px-4 py-3 pr-8 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                          placeholder="Enter referral percentage"
-                        />
-                        <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">%</span>
-                      </div>
-                    </div>
-                  )}
+                  {false && <div></div>}
                 </>
               ) : (
                 <>
@@ -900,26 +881,7 @@ export default function Accounts() {
                     />
                   </div>
 
-                  {newAccount.type === 'legal' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">
-                        Referral Percentage (Optional)
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="100"
-                          value={newAccount.referralPercentage}
-                          onChange={(e) => setNewAccount({ ...newAccount, referralPercentage: e.target.value })}
-                          className="w-full px-4 py-3 pr-8 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                          placeholder="Enter referral percentage"
-                        />
-                        <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">%</span>
-                      </div>
-                    </div>
-                  )}
+                  {false && <div></div>}
                 </>
               )}
 
