@@ -9,6 +9,7 @@ interface UserData {
   email: string;
   role: 'admin' | 'player';
   name?: string;
+  percentage?: number;
 }
 
 interface AuthContextType {

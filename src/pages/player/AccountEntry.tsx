@@ -19,6 +19,13 @@ interface Account {
   status: 'active' | 'inactive' | 'unused';
   depositAmount?: number;
   referralPercentage?: number;
+  promoAmount?: number;
+  brokeredById?: string;
+  fundedById?: string;
+  referredById?: string;
+  brokeredByName?: string;
+  fundedByName?: string;
+  referredByName?: string;
 }
 
 interface Entry {
@@ -42,8 +49,11 @@ interface Entry {
   companyAmount: number;
   taxableAmount: number;
   referralAmount: number;
+  funderAmount: number;
   accountStatus: 'active' | 'inactive';
   notes: string;
+  promoCode?: string;
+  promoAmount?: number;
 }
 
 interface Broker {
@@ -85,8 +95,11 @@ export default function AccountEntry() {
     companyAmount: 0,
     taxableAmount: 0,
     referralAmount: 0,
+    funderAmount: 0,
     accountStatus: 'active',
-    notes: ''
+    notes: '',
+    promoCode: '',
+    promoAmount: 0
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -124,12 +137,15 @@ export default function AccountEntry() {
     }
   };
 
+  // Promo amount is account-level now; no per-entry promo codes
+
   // Calculate all amounts whenever relevant fields change
   useEffect(() => {
     const calculateAmounts = async () => {
+      const effectiveStarting = (currentEntry.startingBalance || 0) + (account?.promoAmount || 0);
       const profitLoss = 
         (currentEntry.endingBalance || 0) - 
-        (currentEntry.startingBalance || 0) + 
+        effectiveStarting + 
         (currentEntry.withdrawal || 0) - 
         (currentEntry.refillAmount || 0);
       
@@ -167,7 +183,7 @@ export default function AccountEntry() {
           }
         }
         
-        // Calculate Tax Amount using the fetched tax rate
+        // Calculate Tax Amount using the fetched tax rate (gross basis)
         const taxAmount = (profitLoss * taxRate) / 100;
         
         // Calculate Referral Amount only if referralPercentage exists
@@ -199,6 +215,7 @@ export default function AccountEntry() {
     currentEntry.endingBalance,
     currentEntry.withdrawal,
     currentEntry.refillAmount,
+    currentEntry.promoAmount,
     account,
     userData,
     taxRate,
@@ -210,9 +227,10 @@ export default function AccountEntry() {
     if (!editingEntry || !account || !userData) return;
     
     const calculateEditingAmounts = async () => {
+      const effectiveStarting = (editingEntry.startingBalance || 0) + (account?.promoAmount || 0);
       const profitLoss = 
         (editingEntry.endingBalance || 0) - 
-        (editingEntry.startingBalance || 0) + 
+        effectiveStarting + 
         (editingEntry.withdrawal || 0) - 
         (editingEntry.refillAmount || 0);
       
@@ -274,6 +292,7 @@ export default function AccountEntry() {
     editingEntry?.endingBalance,
     editingEntry?.withdrawal,
     editingEntry?.refillAmount,
+    editingEntry?.promoAmount,
     account,
     userData,
     taxRate,
@@ -293,11 +312,26 @@ export default function AccountEntry() {
         
         // Fetch broker data if exists
         let brokerName = '';
+        let brokeredByName = '';
+        let fundedByName = '';
+        let referredByName = '';
         if (accountData.brokerId) {
           const brokerDoc = await getDoc(doc(db, 'brokers', accountData.brokerId));
           brokerName = brokerDoc.exists() ? brokerDoc.data().name : 'Unknown Broker';
           // Fetch detailed broker data for calculations
           await fetchBrokerData(accountData.brokerId);
+        }
+        if (accountData.brokeredById) {
+          const b = await getDoc(doc(db, 'brokers', accountData.brokeredById));
+          brokeredByName = b.exists() ? b.data().name : '';
+        }
+        if (accountData.fundedById) {
+          const b = await getDoc(doc(db, 'brokers', accountData.fundedById));
+          fundedByName = b.exists() ? b.data().name : '';
+        }
+        if (accountData.referredById) {
+          const b = await getDoc(doc(db, 'brokers', accountData.referredById));
+          referredByName = b.exists() ? b.data().name : '';
         }
         
         // Check if account has any entries to determine status
@@ -327,7 +361,14 @@ export default function AccountEntry() {
           brokerName,
           status,
           depositAmount: accountData.depositAmount,
-          referralPercentage: accountData.referralPercentage
+          referralPercentage: accountData.referralPercentage,
+          promoAmount: accountData.promoAmount,
+          brokeredById: accountData.brokeredById,
+          fundedById: accountData.fundedById,
+          referredById: accountData.referredById,
+          brokeredByName,
+          fundedByName,
+          referredByName
         });
         
         const entriesData = entriesSnapshot.docs.map(doc => ({
@@ -341,10 +382,18 @@ export default function AccountEntry() {
         if (todayEntry) {
           setCurrentEntry(todayEntry);
         } else {
+          // For PPH accounts, prefill starting balance with previous entry's ending
+          let prefillStarting = 0;
+          if ((accountData.type || 'pph') === 'pph') {
+            const sorted = [...entriesData].sort((a, b) => (b.date > a.date ? 1 : -1));
+            if (sorted.length > 0) {
+              prefillStarting = sorted[0].endingBalance || 0;
+            }
+          }
           setCurrentEntry(prev => ({
             ...prev,
             accountStatus: status === 'unused' ? 'active' : status,
-            startingBalance: accountData.type === 'legal' ? (accountData.depositAmount || 0) : 0
+            startingBalance: accountData.type === 'legal' ? (accountData.depositAmount || 0) : prefillStarting
           }));
         }
       }
@@ -358,7 +407,7 @@ export default function AccountEntry() {
   const handleInputChange = (field: keyof Entry, value: string) => {
     setCurrentEntry(prev => ({
       ...prev,
-      [field]: field === 'startingBalance' || field === 'endingBalance' || field === 'refillAmount' || field === 'withdrawal' || field === 'profitLoss' || field === 'clickerAmount' || field === 'accHolderAmount' || field === 'brokerAmount' || field === 'companyAmount' || field === 'taxableAmount' || field === 'referralAmount'
+      [field]: field === 'startingBalance' || field === 'endingBalance' || field === 'refillAmount' || field === 'withdrawal' || field === 'profitLoss' || field === 'clickerAmount' || field === 'accHolderAmount' || field === 'brokerAmount' || field === 'companyAmount' || field === 'taxableAmount' || field === 'referralAmount' || field === 'promoAmount'
         ? (value === '' ? '' : Number(value))
         : value
     }));
@@ -390,7 +439,9 @@ export default function AccountEntry() {
         brokerAmount: currentEntry.brokerAmount || 0,
         companyAmount: currentEntry.companyAmount || 0,
         taxableAmount: currentEntry.taxableAmount || 0,
-        referralAmount: currentEntry.referralAmount || 0
+        referralAmount: currentEntry.referralAmount || 0,
+        promoCode: currentEntry.promoCode || '',
+        promoAmount: currentEntry.promoAmount || 0
       };
 
       if (currentEntry.id) {
@@ -446,7 +497,9 @@ export default function AccountEntry() {
         brokerAmount: editingEntry.brokerAmount || 0,
         companyAmount: editingEntry.companyAmount || 0,
         taxableAmount: editingEntry.taxableAmount || 0,
-        referralAmount: editingEntry.referralAmount || 0
+        referralAmount: editingEntry.referralAmount || 0,
+        promoCode: editingEntry.promoCode || '',
+        promoAmount: editingEntry.promoAmount || 0
       };
 
       await updateDoc(doc(db, 'entries', editingEntry.id!), {
@@ -650,6 +703,7 @@ export default function AccountEntry() {
                 onChange={(e) => handleInputChange('startingBalance', e.target.value)}
                 className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
                 required
+                readOnly={account?.type === 'legal'}
               />
             </div>
             
@@ -677,6 +731,19 @@ export default function AccountEntry() {
                 value={currentEntry.refillAmount === 0 ? '' : currentEntry.refillAmount}
                 onChange={(e) => handleInputChange('refillAmount', e.target.value)}
                 className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Promo Amount (Account Level)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={account?.promoAmount || 0}
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none cursor-not-allowed"
+                readOnly
               />
             </div>
             
@@ -808,7 +875,7 @@ export default function AccountEntry() {
                         <label className="block text-sm text-gray-400 mb-1">Date</label>
                         <input
                           type="date"
-                          value={editingEntry.date}
+                          value={editingEntry?.date || ''}
                           onChange={(e) => handleEditInputChange('date', e.target.value)}
                           className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
@@ -818,7 +885,7 @@ export default function AccountEntry() {
                         <input
                           type="number"
                           step="0.01"
-                          value={editingEntry.startingBalance === 0 ? '' : editingEntry.startingBalance}
+                          value={editingEntry && editingEntry.startingBalance === 0 ? '' : (editingEntry?.startingBalance || '')}
                           onChange={(e) => handleEditInputChange('startingBalance', e.target.value)}
                           className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
@@ -828,7 +895,7 @@ export default function AccountEntry() {
                         <input
                           type="number"
                           step="0.01"
-                          value={editingEntry.endingBalance === 0 ? '' : editingEntry.endingBalance}
+                          value={editingEntry && editingEntry.endingBalance === 0 ? '' : (editingEntry?.endingBalance || '')}
                           onChange={(e) => handleEditInputChange('endingBalance', e.target.value)}
                           className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
@@ -838,7 +905,7 @@ export default function AccountEntry() {
                         <input
                           type="number"
                           step="0.01"
-                          value={editingEntry.refillAmount === 0 ? '' : editingEntry.refillAmount}
+                          value={editingEntry && editingEntry.refillAmount === 0 ? '' : (editingEntry?.refillAmount || '')}
                           onChange={(e) => handleEditInputChange('refillAmount', e.target.value)}
                           className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
@@ -848,7 +915,7 @@ export default function AccountEntry() {
                         <input
                           type="number"
                           step="0.01"
-                          value={editingEntry.withdrawal === 0 ? '' : editingEntry.withdrawal}
+                          value={editingEntry && editingEntry.withdrawal === 0 ? '' : (editingEntry?.withdrawal || '')}
                           onChange={(e) => handleEditInputChange('withdrawal', e.target.value)}
                           className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
                         />
@@ -856,7 +923,7 @@ export default function AccountEntry() {
                       <div>
                         <label className="block text-sm text-gray-400 mb-1">Compliance Review</label>
                         <select
-                          value={editingEntry.complianceReview}
+                          value={editingEntry?.complianceReview || 'Requested Document'}
                           onChange={(e) => handleEditInputChange('complianceReview', e.target.value)}
                           className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm focus:bg-gray-800"
                           required
@@ -867,18 +934,18 @@ export default function AccountEntry() {
                           <option className="bg-gray-800 text-white" value="N/A">N/A</option>
                         </select>
                       </div>
-                      {renderAmountInput('Profit/Loss', editingEntry.profitLoss, true, editingEntry.profitLoss >= 0)}
-                      {renderAmountInput('Clicker Amount', editingEntry.clickerAmount)}
-                      {renderAmountInput('Account Holder Amount', editingEntry.accHolderAmount)}
-                      {account.brokerId && renderAmountInput('Broker Amount', editingEntry.brokerAmount)}
-                      {renderAmountInput('Company Amount', editingEntry.companyAmount, true, editingEntry.companyAmount >= 0)}
-                      {renderAmountInput('Taxable Amount', editingEntry.taxableAmount, true, false)}
-                      {account?.referralPercentage && renderAmountInput('Referral Amount', editingEntry.referralAmount)}
+                      {renderAmountInput('Profit/Loss', editingEntry?.profitLoss || 0, true, (editingEntry?.profitLoss || 0) >= 0)}
+                      {renderAmountInput('Clicker Amount', editingEntry?.clickerAmount || 0)}
+                      {renderAmountInput('Account Holder Amount', editingEntry?.accHolderAmount || 0)}
+                      {account.brokerId && renderAmountInput('Broker Amount', editingEntry?.brokerAmount || 0)}
+                      {renderAmountInput('Company Amount', editingEntry?.companyAmount || 0, true, (editingEntry?.companyAmount || 0) >= 0)}
+                      {renderAmountInput('Taxable Amount', editingEntry?.taxableAmount || 0, true, false)}
+                      {account?.referralPercentage && renderAmountInput('Referral Amount', editingEntry?.referralAmount || 0)}
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Notes</label>
                       <textarea
-                        value={editingEntry.notes}
+                        value={editingEntry?.notes || ''}
                         onChange={(e) => handleEditInputChange('notes', e.target.value)}
                         rows={2}
                         className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded text-white text-sm"
@@ -932,7 +999,7 @@ export default function AccountEntry() {
                         <Edit className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => handleDeleteEntry(entry.id!)}
+                        onClick={() => entry?.id && handleDeleteEntry(entry.id)}
                         className="p-2 text-gray-400 hover:text-red-400 transition-colors"
                       >
                         <Trash2 className="w-4 h-4" />

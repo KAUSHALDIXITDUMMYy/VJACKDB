@@ -59,6 +59,9 @@ interface EntryData {
   accHolderName?: string;
   accNumber?: string;
   brokerName?: string;
+  fundedByName?: string;
+  referredByName?: string;
+  promoAmount?: number;
   playerName: string;
   playerUid: string;
   startingBalance: number;
@@ -245,7 +248,7 @@ export default function Dashboard() {
           agentNameToId.set(agentKey, agentId);
         }
 
-        // Ensure broker (optional)
+        // Ensure brokered-by (optional)
         const brokerNameRaw = (getVal(obj, ['Brokered By', 'Broker', 'Brokered']) || '').toString().trim();
         let brokerId: string | undefined = undefined;
         if (brokerNameRaw) {
@@ -265,11 +268,52 @@ export default function Dashboard() {
           }
         }
 
+        // Ensure funded-by (optional)
+        const fundedByRaw = (getVal(obj, ['Funded By', 'Funder', 'Funded']) || '').toString().trim();
+        let fundedById: string | undefined = undefined;
+        if (fundedByRaw) {
+          const fundKey = fundedByRaw.toLowerCase();
+          fundedById = brokerNameToId.get(fundKey);
+          if (!fundedById) {
+            const fundDoc = await addDoc(collection(db, 'brokers'), {
+              name: fundedByRaw,
+              commissionType: 'both',
+              commissionPercentage: 0,
+              flatCommission: 0,
+              createdAt: new Date(),
+              specialScenarios: []
+            });
+            fundedById = fundDoc.id;
+            brokerNameToId.set(fundKey, fundedById);
+          }
+        }
+
+        // Ensure referred-by (optional)
+        const referredByRaw = (getVal(obj, ['Referred By', 'Referral By', 'Referral']) || '').toString().trim();
+        let referredById: string | undefined = undefined;
+        if (referredByRaw) {
+          const refKey = referredByRaw.toLowerCase();
+          referredById = brokerNameToId.get(refKey);
+          if (!referredById) {
+            const refDoc = await addDoc(collection(db, 'brokers'), {
+              name: referredByRaw,
+              commissionType: 'both',
+              commissionPercentage: 0,
+              flatCommission: 0,
+              createdAt: new Date(),
+              specialScenarios: []
+            });
+            referredById = refDoc.id;
+            brokerNameToId.set(refKey, referredById);
+          }
+        }
+
         // Build account id and upsert account
         const accNumber = (obj['Number'] || '').toString().trim();
         const startDate = parseDate(getVal(obj, ['Start date', 'Start Date', 'Start']));
         const accountDocId = `import-${safeId(accHolderName)}-${safeId(accNumber || 'na')}-${startDate}`;
         const startingBalance = money(getVal(obj, ['Starting balance', 'Accs Holder existing balance']));
+        const promoAmount = money(getVal(obj, ['Promo $', 'Promo']));
 
         // Determine clicker/player by name (no stub creation)
         const clickerNameRaw = (getVal(obj, ['Clicker Name', 'Clicker', 'Clicker Name ']) || '').toString().trim();
@@ -300,8 +344,12 @@ export default function Dashboard() {
           name: accNumber ? `${accHolderName} (${accNumber})` : accHolderName,
           agentId,
           brokerId: brokerId || null,
+          brokeredById: brokerId || null,
+          fundedById: fundedById || null,
+          referredById: referredById || null,
           status: assignedToPlayerUid ? 'active' : 'unused',
           depositAmount: startingBalance,
+          promoAmount,
           assignedToPlayerUid,
           createdAt: new Date()
         }, { merge: true });
@@ -474,6 +522,8 @@ export default function Dashboard() {
           let accHolderName = 'Unknown Account Holder';
           let accNumber = '';
           let brokerName = '';
+          let fundedByName = '';
+          let referredByName = '';
           if (account) {
             const agent = agents.find((a: any) => a.id === account.agentId);
             accHolderName = agent?.name || accHolderName;
@@ -484,6 +534,14 @@ export default function Dashboard() {
             if (account.brokerId) {
               const broker = brokers.find((b: any) => b.id === account.brokerId);
               brokerName = broker?.name || '';
+            }
+            if (account.fundedById) {
+              const funder = brokers.find((b: any) => b.id === account.fundedById);
+              fundedByName = funder?.name || '';
+            }
+            if (account.referredById) {
+              const ref = brokers.find((b: any) => b.id === account.referredById);
+              referredByName = ref?.name || '';
             }
           }
           
@@ -496,6 +554,9 @@ export default function Dashboard() {
             accHolderName,
             accNumber,
             brokerName,
+            fundedByName,
+            referredByName,
+            promoAmount: account?.promoAmount || 0,
             playerName: player?.name || 'Unknown Player',
             playerUid: entry.playerUid,
             startingBalance: entry.startingBalance || 0,
@@ -682,9 +743,9 @@ export default function Dashboard() {
             'Sr No': idx + 1,
             'Acc holder name': entry.accHolderName || '',
             'Number': entry.accNumber || '',
-            'Funded By': '',
+            'Funded By': entry.fundedByName || '',
             'Brokered By': entry.brokerName || '',
-            'Referred By': '',
+            'Referred By': entry.referredByName || '',
             'Start date': startDate,
             'End Date': endDate,
             'Withdrawal submitted': '',
@@ -695,7 +756,7 @@ export default function Dashboard() {
             'Refill $ ': '',
             'Refill By 2 ': '',
             'Refill $  ': '',
-            'Promo $': '',
+            'Promo $': entry.promoAmount || 0,
             'Accs Holder existing balance': entry.startingBalance || 0,
             'Ending Balance': entry.endingBalance || 0,
             'Gross Profit': entry.profitLoss || 0,

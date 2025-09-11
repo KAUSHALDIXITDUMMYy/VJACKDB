@@ -24,6 +24,16 @@ interface Account {
   status: 'active' | 'inactive' | 'unused';
   createdAt: Date;
   referralPercentage?: number;
+  promoAmount?: number;
+  brokeredById?: string;
+  fundedById?: string;
+  referredById?: string;
+  brokeredOverrideType?: 'gross' | 'net' | '';
+  brokeredOverridePct?: number;
+  fundedOverrideType?: 'gross' | 'net' | '';
+  fundedOverridePct?: number;
+  referredOverrideType?: 'gross' | 'net' | '';
+  referredOverridePct?: number;
 }
 
 interface Agent {
@@ -58,7 +68,17 @@ export default function Accounts() {
     depositAmount: '',
     agentId: '',
     brokerId: '',
-    status: 'active' as 'active' | 'inactive' | 'unused'
+    brokeredById: '',
+    fundedById: '',
+    referredById: '',
+    status: 'active' as 'active' | 'inactive' | 'unused',
+    promoAmount: '',
+    brokeredOverrideType: '' as '' | 'gross' | 'net',
+    brokeredOverridePct: '',
+    fundedOverrideType: '' as '' | 'gross' | 'net',
+    fundedOverridePct: '',
+    referredOverrideType: '' as '' | 'gross' | 'net',
+    referredOverridePct: ''
   });
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive' | 'unused' | 'pph' | 'legal'>('all');
@@ -224,6 +244,9 @@ export default function Accounts() {
     if (newAccount.brokerId) {
       accountData.brokerId = newAccount.brokerId;
     }
+    if ((newAccount as any).brokeredById) accountData.brokeredById = (newAccount as any).brokeredById;
+    if ((newAccount as any).fundedById) accountData.fundedById = (newAccount as any).fundedById;
+    if ((newAccount as any).referredById) accountData.referredById = (newAccount as any).referredById;
 
     if (newAccount.type === 'pph') {
       if (!newAccount.username || !newAccount.websiteURL || !newAccount.password) return;
@@ -239,6 +262,9 @@ export default function Accounts() {
       accountData.depositAmount = parseFloat(newAccount.depositAmount) || 0;
     }
 
+    // Promo amount (optional)
+    accountData.promoAmount = parseFloat((newAccount as any).promoAmount) || 0;
+
     try {
       await addDoc(collection(db, 'accounts'), accountData);
       setNewAccount({
@@ -253,7 +279,11 @@ export default function Accounts() {
         depositAmount: '',
         agentId: '',
         brokerId: '',
-        status: 'active'
+        brokeredById: '',
+        fundedById: '',
+        referredById: '',
+        status: 'active',
+        promoAmount: ''
       });
       setShowModal(false);
       fetchAccounts();
@@ -272,6 +302,9 @@ export default function Accounts() {
       type: editingAccount.type,
       agentId: editingAccount.agentId,
       brokerId: editingAccount.brokerId || null,
+      brokeredById: (editingAccount as any).brokeredById || null,
+      fundedById: (editingAccount as any).fundedById || null,
+      referredById: (editingAccount as any).referredById || null,
       status: editingAccount.status,
       updatedAt: new Date(),
       referralPercentage: editingAccount.referralPercentage ? Number(editingAccount.referralPercentage) : undefined,
@@ -807,18 +840,7 @@ export default function Accounts() {
                       required
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Deal
-                    </label>
-                    <input
-                      type="text"
-                      value={newAccount.deal}
-                      onChange={(e) => setNewAccount({ ...newAccount, deal: e.target.value })}
-                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                      placeholder="Enter deal details"
-                    />
-                  </div>
+                  {/* Deal text removed; scenario-based or overrides below */}
                   <div>
                     <label className="block text-sm font-medium text-gray-300 mb-2">
                       IP Address
@@ -881,6 +903,21 @@ export default function Accounts() {
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Promo Amount (optional)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={(newAccount as any).promoAmount}
+                      onChange={(e) => setNewAccount({ ...newAccount, promoAmount: e.target.value } as any)}
+                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="Enter promo $"
+                    />
+                  </div>
+
                   {false && <div></div>}
                 </>
               )}
@@ -907,22 +944,53 @@ export default function Accounts() {
                 </select>
               </div>
 
+              {/* Scenario Entities */}
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Broker (Optional)
-                </label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Brokered By</label>
                 <select
-                  value={newAccount.brokerId}
-                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => 
-                    setNewAccount({ ...newAccount, brokerId: e.target.value })
-                  }
+                  value={(newAccount as any).brokeredById}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewAccount({ ...newAccount, brokeredById: e.target.value } as any)}
                   className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
                   style={{ backgroundImage: dropdownArrowSvg }}
                 >
-                  <option value="" className="bg-gray-800 text-white">No Broker</option>
+                  <option value="" className="bg-gray-800 text-white">None</option>
                   {brokers.map((broker) => (
                     <option key={broker.id} value={broker.id} className="bg-gray-800 text-white hover:bg-amber-500">
-                      {broker.name} ({broker.accountCount})
+                      {broker.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Funded By</label>
+                <select
+                  value={(newAccount as any).fundedById}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewAccount({ ...newAccount, fundedById: e.target.value } as any)}
+                  className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
+                  style={{ backgroundImage: dropdownArrowSvg }}
+                >
+                  <option value="" className="bg-gray-800 text-white">None</option>
+                  {brokers.map((broker) => (
+                    <option key={broker.id} value={broker.id} className="bg-gray-800 text-white hover:bg-amber-500">
+                      {broker.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Referred By</label>
+                <select
+                  value={(newAccount as any).referredById}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewAccount({ ...newAccount, referredById: e.target.value } as any)}
+                  className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
+                  style={{ backgroundImage: dropdownArrowSvg }}
+                >
+                  <option value="" className="bg-gray-800 text-white">None</option>
+                  {brokers.map((broker) => (
+                    <option key={broker.id} value={broker.id} className="bg-gray-800 text-white hover:bg-amber-500">
+                      {broker.name}
                     </option>
                   ))}
                 </select>
@@ -944,6 +1012,95 @@ export default function Accounts() {
                   <option value="inactive" className="bg-gray-800 text-white">Inactive</option>
                   <option value="unused" className="bg-gray-800 text-white">Unused</option>
                 </select>
+              </div>
+
+              {/* Optional overrides if scenario matrix does not match */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Brokered Override Type
+                  </label>
+                  <select
+                    value={(newAccount as any).brokeredOverrideType}
+                    onChange={(e) => setNewAccount({ ...newAccount, brokeredOverrideType: e.target.value } as any)}
+                    className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
+                    style={{ backgroundImage: dropdownArrowSvg }}
+                  >
+                    <option value="" className="bg-gray-800 text-white">Auto</option>
+                    <option value="gross" className="bg-gray-800 text-white">Gross %</option>
+                    <option value="net" className="bg-gray-800 text-white">Net-after-tax %</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Brokered Override %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={(newAccount as any).brokeredOverridePct}
+                    onChange={(e) => setNewAccount({ ...newAccount, brokeredOverridePct: e.target.value } as any)}
+                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                    placeholder="e.g. 10"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Funded Override Type
+                  </label>
+                  <select
+                    value={(newAccount as any).fundedOverrideType}
+                    onChange={(e) => setNewAccount({ ...newAccount, fundedOverrideType: e.target.value } as any)}
+                    className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
+                    style={{ backgroundImage: dropdownArrowSvg }}
+                  >
+                    <option value="" className="bg-gray-800 text-white">Auto</option>
+                    <option value="gross" className="bg-gray-800 text-white">Gross %</option>
+                    <option value="net" className="bg-gray-800 text-white">Net-after-tax %</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Funded Override %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={(newAccount as any).fundedOverridePct}
+                    onChange={(e) => setNewAccount({ ...newAccount, fundedOverridePct: e.target.value } as any)}
+                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                    placeholder="e.g. 25"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Referred Override Type
+                  </label>
+                  <select
+                    value={(newAccount as any).referredOverrideType}
+                    onChange={(e) => setNewAccount({ ...newAccount, referredOverrideType: e.target.value } as any)}
+                    className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
+                    style={{ backgroundImage: dropdownArrowSvg }}
+                  >
+                    <option value="" className="bg-gray-800 text-white">Auto</option>
+                    <option value="gross" className="bg-gray-800 text-white">Gross %</option>
+                    <option value="net" className="bg-gray-800 text-white">Net-after-tax %</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Referred Override %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={(newAccount as any).referredOverridePct}
+                    onChange={(e) => setNewAccount({ ...newAccount, referredOverridePct: e.target.value } as any)}
+                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                    placeholder="e.g. 5"
+                  />
+                </div>
               </div>
 
               <div className="flex justify-end space-x-4 mt-6">
