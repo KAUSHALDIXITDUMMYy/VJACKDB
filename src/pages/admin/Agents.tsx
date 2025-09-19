@@ -8,6 +8,7 @@ interface Agent {
   name: string;
   commissionPercentage: number;
   flatCommission?: number;
+  phone?: string;
   createdAt: Date;
 }
 
@@ -20,7 +21,8 @@ export default function Agents() {
   const [newAgent, setNewAgent] = useState({
     name: '',
     commissionPercentage: '',
-    flatCommission: ''
+    flatCommission: '',
+    phone: ''
   });
   const [loading, setLoading] = useState(true);
 
@@ -61,9 +63,10 @@ export default function Agents() {
         name: newAgent.name.trim(),
         commissionPercentage: newAgent.commissionPercentage,
         flatCommission: Number(newAgent.flatCommission) || 0,
+        phone: (newAgent as any).phone ? String((newAgent as any).phone).trim() : '',
         createdAt: new Date()
       });
-      setNewAgent({ name: '', commissionPercentage: 0, flatCommission: 0 });
+      setNewAgent({ name: '', commissionPercentage: 0, flatCommission: 0, phone: '' } as any);
       setShowModal(false);
       fetchAgents();
     } catch (error) {
@@ -80,6 +83,7 @@ export default function Agents() {
         name: editingAgent.name.trim(),
         commissionPercentage: editingAgent.commissionPercentage,
         flatCommission: Number(editingAgent.flatCommission) || 0,
+        phone: editingAgent.phone ? String(editingAgent.phone).trim() : '',
         updatedAt: new Date()
       });
       setEditingAgent(null);
@@ -162,6 +166,13 @@ export default function Agents() {
                     className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white text-lg font-semibold"
                     required
                   />
+                  <input
+                    type="tel"
+                    value={editingAgent.phone || ''}
+                    onChange={(e) => setEditingAgent({ ...editingAgent, phone: e.target.value })}
+                    className="w-full px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white"
+                    placeholder="Phone Number"
+                  />
                   <div>
                     <label className="block text-sm text-gray-400 mb-1">Commission %</label>
                     <div className="relative">
@@ -222,6 +233,9 @@ export default function Agents() {
                         <p className="text-sm text-gray-400">
                           Commission: {agent.commissionPercentage}% + ${agent.flatCommission || 0} flat
                         </p>
+                        {agent.phone && (
+                          <p className="text-sm text-gray-400">Phone: {agent.phone}</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
@@ -266,6 +280,18 @@ export default function Agents() {
                   className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
                   placeholder="Enter account holder name"
                   required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={(newAgent as any).phone}
+                  onChange={(e) => setNewAgent({ ...newAgent, phone: e.target.value } as any)}
+                  className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                  placeholder="Enter phone number"
                 />
               </div>
               <div>

@@ -54,6 +54,15 @@ interface Entry {
   notes: string;
   promoCode?: string;
   promoAmount?: number;
+  refills?: { by: string; amount: number }[];
+  payments?: { amount: number; method: string; date: string }[];
+  withdrawalSubmitted?: string;
+  settledAmount?: number;
+  settledDate?: string;
+  companyFunded?: number;
+  funderWayAmount?: number;
+  initialsReturnedOut?: string;
+  accHolderPromo150?: number;
 }
 
 interface Broker {
@@ -99,7 +108,16 @@ export default function AccountEntry() {
     accountStatus: 'active',
     notes: '',
     promoCode: '',
-    promoAmount: 0
+    promoAmount: 0,
+    refills: [],
+    payments: [],
+    withdrawalSubmitted: '',
+    settledAmount: 0,
+    settledDate: '',
+    companyFunded: 0,
+    funderWayAmount: 0,
+    initialsReturnedOut: '',
+    accHolderPromo150: 0
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -734,6 +752,47 @@ export default function AccountEntry() {
               />
             </div>
 
+            {/* Refill breakdown list */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">Refills (By / Amount)</label>
+              <div className="space-y-2">
+                {(currentEntry.refills || []).map((r, idx) => (
+                  <div key={idx} className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={r.by}
+                      onChange={(e) => {
+                        const next = [...(currentEntry.refills || [])];
+                        next[idx] = { ...next[idx], by: e.target.value };
+                        setCurrentEntry(prev => ({ ...prev, refills: next }));
+                      }}
+                      className="px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white"
+                      placeholder="Refill By"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={r.amount}
+                      onChange={(e) => {
+                        const next = [...(currentEntry.refills || [])];
+                        next[idx] = { ...next[idx], amount: Number(e.target.value) || 0 };
+                        setCurrentEntry(prev => ({ ...prev, refills: next }));
+                      }}
+                      className="px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white"
+                      placeholder="Amount"
+                    />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setCurrentEntry(prev => ({ ...prev, refills: [...(prev.refills || []), { by: '', amount: 0 }] }))}
+                  className="px-3 py-2 bg-white/5 border border-purple-500/20 rounded-lg text-white hover:bg-white/10"
+                >
+                  + Add Refill
+                </button>
+              </div>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Promo Amount (Account Level)
@@ -756,6 +815,16 @@ export default function AccountEntry() {
                 step="0.01"
                 value={currentEntry.withdrawal === 0 ? '' : currentEntry.withdrawal}
                 onChange={(e) => handleInputChange('withdrawal', e.target.value)}
+                className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Withdrawal Submitted</label>
+              <input
+                type="date"
+                value={currentEntry.withdrawalSubmitted || ''}
+                onChange={(e) => setCurrentEntry(prev => ({ ...prev, withdrawalSubmitted: e.target.value }))}
                 className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
               />
             </div>
