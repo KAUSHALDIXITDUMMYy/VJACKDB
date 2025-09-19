@@ -26,6 +26,7 @@ interface Account {
   brokeredByName?: string;
   fundedByName?: string;
   referredByName?: string;
+  playerPercentage?: number;
 }
 
 interface Entry {
@@ -176,10 +177,14 @@ export default function AccountEntry() {
       }
 
       try {
-        // Calculate Clicker Amount using account-specific player percentage (fallback 30%) on net-after-tax
+        // Calculate Clicker Amount using account-specific player percentage, fallback to player setting, else 30% of net-after-tax
         const taxAmount = (profitLoss * taxRate) / 100;
         const netAfterTax = profitLoss - taxAmount;
-        const playerPct = typeof (account as any).playerPercentage === 'number' ? (account as any).playerPercentage : 30;
+        const acctPctRaw = (account as any).playerPercentage;
+        const userPctRaw = (userData as any)?.percentage;
+        const playerPct = (typeof acctPctRaw === 'number' && acctPctRaw > 0)
+          ? acctPctRaw
+          : (typeof userPctRaw === 'number' && userPctRaw > 0 ? userPctRaw : 30);
         const clickerAmount = (netAfterTax * (playerPct / 100));
         
         // Get agent data for commission calculation
@@ -255,8 +260,15 @@ export default function AccountEntry() {
         (editingEntry.refillAmount || 0);
       
       try {
-        // Calculate Clicker Amount
-        const clickerAmount = (profitLoss * (userData.percentage || 0)) / 100;
+        // Calculate Clicker Amount using same fallback logic on net-after-tax
+        const taxAmount = (profitLoss * taxRate) / 100;
+        const netAfterTax = profitLoss - taxAmount;
+        const acctPctRaw = (account as any).playerPercentage;
+        const userPctRaw = (userData as any)?.percentage;
+        const playerPct = (typeof acctPctRaw === 'number' && acctPctRaw > 0)
+          ? acctPctRaw
+          : (typeof userPctRaw === 'number' && userPctRaw > 0 ? userPctRaw : 30);
+        const clickerAmount = (netAfterTax * (playerPct / 100));
         
         // Get agent data for commission calculation
         const agent = await getDoc(doc(db, 'agents', account.agentId));
@@ -279,9 +291,6 @@ export default function AccountEntry() {
                           (broker.flatCommission || 0);
           }
         }
-        
-        // Calculate Tax Amount using the fetched tax rate
-        const taxAmount = (profitLoss * taxRate) / 100;
         
         // Calculate Referral Amount only if referralPercentage exists
         const referralAmount = account.referralPercentage ? 

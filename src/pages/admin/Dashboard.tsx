@@ -608,10 +608,17 @@ export default function Dashboard() {
           const playerProfit = playerEntries.reduce((sum, entry) => sum + (entry.profitLoss || 0), 0);
           const pct = typeof player.percentage === 'number' ? player.percentage : 0;
           const totalClickerCommission = playerEntries.reduce((sum, entry) => {
-            const clickerAmt = typeof entry.clickerAmount === 'number'
-              ? entry.clickerAmount
-              : ((entry.profitLoss || 0) * (pct / 100));
-            return sum + (clickerAmt || 0);
+            if (typeof entry.clickerAmount === 'number') {
+              return sum + (entry.clickerAmount || 0);
+            }
+            // Fallback: compute using account-level percentage if present else player's percentage; apply on net-after-tax
+            const acc = accounts.find((a: any) => a.id === entry.accountId);
+            const accPct = typeof acc?.playerPercentage === 'number' && acc.playerPercentage > 0 ? acc.playerPercentage : undefined;
+            const usedPct = typeof accPct === 'number' ? accPct : pct;
+            const taxAmount = (entry.taxableAmount || 0);
+            const netAfterTax = (entry.profitLoss || 0) - taxAmount;
+            const computed = netAfterTax * ((usedPct || 30) / 100);
+            return sum + computed;
           }, 0);
 
           return {
