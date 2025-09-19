@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, getDocs, deleteDoc, doc, query, where, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, deleteDoc, doc, query, where, updateDoc, deleteField } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Plus, CreditCard, Trash2, Edit, ExternalLink, Save, X, BarChart3, Search, Filter, User, Briefcase } from 'lucide-react';
+import { Plus, CreditCard, Trash2, Edit, ExternalLink, Save, X, BarChart3, Search, User, Briefcase } from 'lucide-react';
 
 interface Account {
   id: string;
@@ -34,6 +34,7 @@ interface Account {
   fundedOverridePct?: number;
   referredOverrideType?: 'gross' | 'net' | '';
   referredOverridePct?: number;
+  playerPercentage?: number;
 }
 
 interface Agent {
@@ -54,6 +55,7 @@ export default function Accounts() {
   const [searchTerm, setSearchTerm] = useState('');
   const [agents, setAgents] = useState<Agent[]>([]);
   const [brokers, setBrokers] = useState<Broker[]>([]);
+  const [clickers, setClickers] = useState<{ id: string; label: string; source: 'user' | 'pending'; uid?: string }[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [newAccount, setNewAccount] = useState({
@@ -84,11 +86,13 @@ export default function Accounts() {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive' | 'unused' | 'pph' | 'legal'>('all');
   const [agentFilter, setAgentFilter] = useState<string>('all');
   const [brokerFilter, setBrokerFilter] = useState<string>('all');
+  const [clickerFilter, setClickerFilter] = useState<string>('all');
 
   useEffect(() => {
     fetchAccounts();
     fetchAgents();
     fetchBrokers();
+    fetchClickers();
   }, []);
 
   useEffect(() => {
@@ -116,9 +120,18 @@ export default function Accounts() {
     if (brokerFilter !== 'all') {
       filtered = filtered.filter(account => account.brokerId === brokerFilter);
     }
-    
+
+    // Clicker filter
+    if (clickerFilter !== 'all') {
+      if (clickerFilter === 'none') {
+        filtered = filtered.filter(account => !account.assignedToPlayerUid);
+      } else {
+        filtered = filtered.filter(account => account.assignedToPlayerUid === clickerFilter);
+      }
+    }
+
     setFilteredAccounts(filtered);
-  }, [accounts, searchTerm, filter, agentFilter, brokerFilter]);
+  }, [accounts, searchTerm, filter, agentFilter, brokerFilter, clickerFilter]);
 
   const fetchAccounts = async () => {
     try {
@@ -229,6 +242,21 @@ export default function Accounts() {
     }
   };
 
+  const fetchClickers = async () => {
+    try {
+      const usersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'player')));
+      const active = usersSnap.docs.map((d) => ({ id: d.id, label: d.data().name || d.data().email || d.id, source: 'user' as const, uid: d.data().uid || d.id }));
+      const pendingSnap = await getDocs(collection(db, 'players'));
+      const pending = pendingSnap.docs.map((d) => ({ id: d.id, label: d.data().name || d.data().email || d.id, source: 'pending' as const }));
+      setClickers([
+        ...active.sort((a,b)=>a.label.localeCompare(b.label)),
+        ...pending.sort((a,b)=>a.label.localeCompare(b.label))
+      ]);
+    } catch (e) {
+      console.error('Error fetching clickers:', e);
+    }
+  };
+
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAccount.agentId) return;
@@ -266,6 +294,30 @@ export default function Accounts() {
     accountData.promoAmount = parseFloat((newAccount as any).promoAmount) || 0;
 
     try {
+      // Assign clicker if selected
+      const selectedClicker = (newAccount as any).assignedClickerId as string | undefined;
+      if (selectedClicker) {
+        if (selectedClicker.startsWith('user:')) {
+          const uid = selectedClicker.replace('user:', '');
+          accountData.assignedToPlayerUid = uid;
+        } else if (selectedClicker.startsWith('pending:')) {
+          const pid = selectedClicker.replace('pending:', '');
+          // Create users doc (no Auth) - will be linked to auth on first login
+          // Fetch pending doc for name/email if available
+          const pendingSnap = await getDocs(query(collection(db, 'players'), where('__name__', '==', pid)));
+          const pdata = pendingSnap.docs[0]?.data() || {};
+          const userRef = await addDoc(collection(db, 'users'), {
+            email: pdata.email || '',
+            name: pdata.name || 'Pending Clicker',
+            role: 'player',
+            createdAt: new Date()
+          });
+          const uid = userRef.id;
+          await updateDoc(doc(db, 'users', uid), { uid });
+          accountData.assignedToPlayerUid = uid;
+        }
+      }
+
       await addDoc(collection(db, 'accounts'), accountData);
       setNewAccount({
         type: 'pph',
@@ -283,12 +335,20 @@ export default function Accounts() {
         fundedById: '',
         referredById: '',
         status: 'active',
-        promoAmount: ''
-      });
+        promoAmount: '',
+        brokeredOverrideType: '',
+        brokeredOverridePct: '',
+        fundedOverrideType: '',
+        fundedOverridePct: '',
+        referredOverrideType: '',
+        referredOverridePct: '',
+        assignedClickerId: ''
+      } as any);
       setShowModal(false);
       fetchAccounts();
       fetchAgents();
       fetchBrokers();
+      fetchClickers();
     } catch (error) {
       console.error('Error adding account:', error);
     }
@@ -307,7 +367,6 @@ export default function Accounts() {
       referredById: (editingAccount as any).referredById || null,
       status: editingAccount.status,
       updatedAt: new Date(),
-      referralPercentage: editingAccount.referralPercentage ? Number(editingAccount.referralPercentage) : undefined,
     };
 
     if (editingAccount.type === 'pph') {
@@ -321,8 +380,47 @@ export default function Accounts() {
       updateData.sharePercentage = editingAccount.sharePercentage;
       updateData.depositAmount = editingAccount.depositAmount;
     }
+    // Player percentage saved on account
+    if ((editingAccount as any).playerPercentage === '' || (editingAccount as any).playerPercentage === undefined || (editingAccount as any).playerPercentage === null) {
+      updateData.playerPercentage = deleteField();
+    } else {
+      updateData.playerPercentage = Number((editingAccount as any).playerPercentage) || 0;
+    }
+
+    // Handle referralPercentage explicitly to avoid undefined
+    if (
+      (editingAccount as any).referralPercentage === undefined ||
+      (editingAccount as any).referralPercentage === null ||
+      (editingAccount as any).referralPercentage === ''
+    ) {
+      updateData.referralPercentage = deleteField();
+    } else {
+      updateData.referralPercentage = Number((editingAccount as any).referralPercentage) || 0;
+    }
 
     try {
+      // Handle clicker reassignment if present
+      const selectedClicker = (editingAccount as any).assignedClickerId as string | undefined;
+      if (selectedClicker) {
+        if (selectedClicker.startsWith('user:')) {
+          const uid = selectedClicker.replace('user:', '');
+          updateData.assignedToPlayerUid = uid;
+        } else if (selectedClicker.startsWith('pending:')) {
+          const pid = selectedClicker.replace('pending:', '');
+          const pendingSnap = await getDocs(query(collection(db, 'players'), where('__name__', '==', pid)));
+          const pdata = pendingSnap.docs[0]?.data() || {};
+          const userRef = await addDoc(collection(db, 'users'), {
+            email: pdata.email || '',
+            name: pdata.name || 'Pending Clicker',
+            role: 'player',
+            createdAt: new Date()
+          });
+          const uid = userRef.id;
+          await updateDoc(doc(db, 'users', uid), { uid });
+          updateData.assignedToPlayerUid = uid;
+        }
+      }
+
       await updateDoc(doc(db, 'accounts', editingAccount.id), updateData);
       setEditingAccount(null);
       fetchAccounts();
@@ -491,6 +589,30 @@ export default function Accounts() {
             ))}
           </select>
         </div>
+
+      <div className="relative flex-1">
+        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <User className="h-5 w-5 text-gray-400" />
+        </div>
+        <select
+          value={clickerFilter}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setClickerFilter(e.target.value)}
+          className="appearance-none w-full pl-10 pr-8 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 bg-no-repeat bg-[length:20px_20px] bg-[position:right_8px_center]"
+          style={{ backgroundImage: dropdownArrowSvg }}
+        >
+          <option value="all" className="bg-gray-800 text-white">All Clickers</option>
+          <option value="none" className="bg-gray-800 text-white">Unassigned</option>
+          {Array.from(new Set(accounts
+            .filter(a => a.assignedToPlayerUid)
+            .map(a => `${a.assignedToPlayerUid}|${a.assignedToPlayerName || 'Unknown'}`)))
+            .map((pair) => {
+              const [uid, name] = pair.split('|');
+              return (
+                <option key={uid} value={uid} className="bg-gray-800 text-white">{name}</option>
+              );
+            })}
+        </select>
+      </div>
       </div>
 
       <div className="flex space-x-4 flex-wrap gap-2">
@@ -705,6 +827,9 @@ export default function Accounts() {
                         <p className="text-sm text-gray-400">Agent: {account.agentName}</p>
                         {account.brokerName && (
                           <p className="text-sm text-amber-400">Broker: {account.brokerName}</p>
+                        )}
+                        {account.assignedToPlayerName && (
+                          <p className="text-sm text-cyan-400">Clicker: {account.assignedToPlayerName}</p>
                         )}
                       </div>
                     </div>
@@ -944,6 +1069,24 @@ export default function Accounts() {
                 </select>
               </div>
 
+              {/* Assign Clicker */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Assign Clicker</label>
+                <select
+                  value={(newAccount as any).assignedClickerId || ''}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewAccount({ ...newAccount, assignedClickerId: e.target.value } as any)}
+                  className="appearance-none w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 pr-10 bg-no-repeat bg-[length:20px_20px] bg-[position:right_10px_center]"
+                  style={{ backgroundImage: dropdownArrowSvg }}
+                >
+                  <option value="" className="bg-gray-800 text-white">Unassigned</option>
+                  {clickers.map(c => (
+                    <option key={`${c.source}:${c.uid || c.id}`} value={`${c.source}:${c.uid || c.id}`} className="bg-gray-800 text-white">
+                      {c.label} {c.source === 'pending' ? '(pending)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Scenario Entities */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Brokered By</label>
@@ -1016,6 +1159,24 @@ export default function Accounts() {
 
               {/* Optional overrides if scenario matrix does not match */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Player Percentage (%)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={(newAccount as any).playerPercentage || ''}
+                      onChange={(e) => setNewAccount({ ...newAccount, playerPercentage: e.target.value } as any)}
+                      className="w-full px-4 py-3 pr-8 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="Enter player % (e.g. 30)"
+                    />
+                    <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">%</span>
+                  </div>
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Brokered Override Type

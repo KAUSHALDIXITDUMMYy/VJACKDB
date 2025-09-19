@@ -176,8 +176,11 @@ export default function AccountEntry() {
       }
 
       try {
-        // Calculate Clicker Amount
-        const clickerAmount = (profitLoss * (userData.percentage || 0)) / 100;
+        // Calculate Clicker Amount using account-specific player percentage (fallback 30%) on net-after-tax
+        const taxAmount = (profitLoss * taxRate) / 100;
+        const netAfterTax = profitLoss - taxAmount;
+        const playerPct = typeof (account as any).playerPercentage === 'number' ? (account as any).playerPercentage : 30;
+        const clickerAmount = (netAfterTax * (playerPct / 100));
         
         // Get agent data for commission calculation
         const agent = await getDoc(doc(db, 'agents', account.agentId));
@@ -201,8 +204,7 @@ export default function AccountEntry() {
           }
         }
         
-        // Calculate Tax Amount using the fetched tax rate (gross basis)
-        const taxAmount = (profitLoss * taxRate) / 100;
+        // Tax amount already computed above
         
         // Calculate Referral Amount only if referralPercentage exists
         const referralAmount = account.referralPercentage ? 
