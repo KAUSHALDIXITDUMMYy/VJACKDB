@@ -30,10 +30,16 @@ interface Account {
   referredById?: string;
   brokeredOverrideType?: 'gross' | 'net' | '';
   brokeredOverridePct?: number;
+  brokeredOverrideFlat?: number;
+  brokeredOverrideMode?: 'percentage' | 'flat' | 'both' | '';
   fundedOverrideType?: 'gross' | 'net' | '';
   fundedOverridePct?: number;
+  fundedOverrideFlat?: number;
+  fundedOverrideMode?: 'percentage' | 'flat' | 'both' | '';
   referredOverrideType?: 'gross' | 'net' | '';
   referredOverridePct?: number;
+  referredOverrideFlat?: number;
+  referredOverrideMode?: 'percentage' | 'flat' | 'both' | '';
   playerPercentage?: number;
 }
 
@@ -77,10 +83,16 @@ export default function Accounts() {
     promoAmount: '',
     brokeredOverrideType: '' as '' | 'gross' | 'net',
     brokeredOverridePct: '',
+    brokeredOverrideFlat: '',
+    brokeredOverrideMode: '' as '' | 'percentage' | 'flat' | 'both',
     fundedOverrideType: '' as '' | 'gross' | 'net',
     fundedOverridePct: '',
+    fundedOverrideFlat: '',
+    fundedOverrideMode: '' as '' | 'percentage' | 'flat' | 'both',
     referredOverrideType: '' as '' | 'gross' | 'net',
-    referredOverridePct: ''
+    referredOverridePct: '',
+    referredOverrideFlat: '',
+    referredOverrideMode: '' as '' | 'percentage' | 'flat' | 'both'
   });
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive' | 'unused' | 'pph' | 'legal'>('all');
@@ -275,6 +287,27 @@ export default function Accounts() {
     if ((newAccount as any).brokeredById) accountData.brokeredById = (newAccount as any).brokeredById;
     if ((newAccount as any).fundedById) accountData.fundedById = (newAccount as any).fundedById;
     if ((newAccount as any).referredById) accountData.referredById = (newAccount as any).referredById;
+    // Save override modes and values if provided
+    if ((newAccount as any).brokeredOverrideType) accountData.brokeredOverrideType = (newAccount as any).brokeredOverrideType;
+    const bPctFilled = (newAccount as any).brokeredOverridePct !== '' && (newAccount as any).brokeredOverridePct !== undefined;
+    const bFlatFilled = (newAccount as any).brokeredOverrideFlat !== '' && (newAccount as any).brokeredOverrideFlat !== undefined;
+    if (bPctFilled) accountData.brokeredOverridePct = Number((newAccount as any).brokeredOverridePct) || 0;
+    if (bFlatFilled) accountData.brokeredOverrideFlat = Number((newAccount as any).brokeredOverrideFlat) || 0;
+    if (bPctFilled || bFlatFilled) accountData.brokeredOverrideMode = (bPctFilled && bFlatFilled) ? 'both' : (bPctFilled ? 'percentage' : 'flat');
+    
+    if ((newAccount as any).fundedOverrideType) accountData.fundedOverrideType = (newAccount as any).fundedOverrideType;
+    const fPctFilled = (newAccount as any).fundedOverridePct !== '' && (newAccount as any).fundedOverridePct !== undefined;
+    const fFlatFilled = (newAccount as any).fundedOverrideFlat !== '' && (newAccount as any).fundedOverrideFlat !== undefined;
+    if (fPctFilled) accountData.fundedOverridePct = Number((newAccount as any).fundedOverridePct) || 0;
+    if (fFlatFilled) accountData.fundedOverrideFlat = Number((newAccount as any).fundedOverrideFlat) || 0;
+    if (fPctFilled || fFlatFilled) accountData.fundedOverrideMode = (fPctFilled && fFlatFilled) ? 'both' : (fPctFilled ? 'percentage' : 'flat');
+
+    if ((newAccount as any).referredOverrideType) accountData.referredOverrideType = (newAccount as any).referredOverrideType;
+    const rPctFilled = (newAccount as any).referredOverridePct !== '' && (newAccount as any).referredOverridePct !== undefined;
+    const rFlatFilled = (newAccount as any).referredOverrideFlat !== '' && (newAccount as any).referredOverrideFlat !== undefined;
+    if (rPctFilled) accountData.referredOverridePct = Number((newAccount as any).referredOverridePct) || 0;
+    if (rFlatFilled) accountData.referredOverrideFlat = Number((newAccount as any).referredOverrideFlat) || 0;
+    if (rPctFilled || rFlatFilled) accountData.referredOverrideMode = (rPctFilled && rFlatFilled) ? 'both' : (rPctFilled ? 'percentage' : 'flat');
 
     if (newAccount.type === 'pph') {
       if (!newAccount.username || !newAccount.websiteURL || !newAccount.password) return;
@@ -338,10 +371,16 @@ export default function Accounts() {
         promoAmount: '',
         brokeredOverrideType: '',
         brokeredOverridePct: '',
+        brokeredOverrideFlat: '',
+        brokeredOverrideMode: '',
         fundedOverrideType: '',
         fundedOverridePct: '',
+        fundedOverrideFlat: '',
+        fundedOverrideMode: '',
         referredOverrideType: '',
         referredOverridePct: '',
+        referredOverrideFlat: '',
+        referredOverrideMode: '',
         assignedClickerId: ''
       } as any);
       setShowModal(false);
@@ -385,6 +424,70 @@ export default function Accounts() {
       updateData.playerPercentage = deleteField();
     } else {
       updateData.playerPercentage = Number((editingAccount as any).playerPercentage) || 0;
+    }
+
+    // Override modes and values
+    if ((editingAccount as any).brokeredOverrideMode === '' || (editingAccount as any).brokeredOverrideMode === undefined) {
+      updateData.brokeredOverrideMode = deleteField();
+    } else {
+      updateData.brokeredOverrideMode = (editingAccount as any).brokeredOverrideMode;
+    }
+    if ((editingAccount as any).brokeredOverrideType === '' || (editingAccount as any).brokeredOverrideType === undefined) {
+      updateData.brokeredOverrideType = deleteField();
+    } else {
+      updateData.brokeredOverrideType = (editingAccount as any).brokeredOverrideType;
+    }
+    if ((editingAccount as any).brokeredOverridePct === '' || (editingAccount as any).brokeredOverridePct === undefined) {
+      updateData.brokeredOverridePct = deleteField();
+    } else {
+      updateData.brokeredOverridePct = Number((editingAccount as any).brokeredOverridePct) || 0;
+    }
+    if ((editingAccount as any).brokeredOverrideFlat === '' || (editingAccount as any).brokeredOverrideFlat === undefined) {
+      updateData.brokeredOverrideFlat = deleteField();
+    } else {
+      updateData.brokeredOverrideFlat = Number((editingAccount as any).brokeredOverrideFlat) || 0;
+    }
+
+    if ((editingAccount as any).fundedOverrideMode === '' || (editingAccount as any).fundedOverrideMode === undefined) {
+      updateData.fundedOverrideMode = deleteField();
+    } else {
+      updateData.fundedOverrideMode = (editingAccount as any).fundedOverrideMode;
+    }
+    if ((editingAccount as any).fundedOverrideType === '' || (editingAccount as any).fundedOverrideType === undefined) {
+      updateData.fundedOverrideType = deleteField();
+    } else {
+      updateData.fundedOverrideType = (editingAccount as any).fundedOverrideType;
+    }
+    if ((editingAccount as any).fundedOverridePct === '' || (editingAccount as any).fundedOverridePct === undefined) {
+      updateData.fundedOverridePct = deleteField();
+    } else {
+      updateData.fundedOverridePct = Number((editingAccount as any).fundedOverridePct) || 0;
+    }
+    if ((editingAccount as any).fundedOverrideFlat === '' || (editingAccount as any).fundedOverrideFlat === undefined) {
+      updateData.fundedOverrideFlat = deleteField();
+    } else {
+      updateData.fundedOverrideFlat = Number((editingAccount as any).fundedOverrideFlat) || 0;
+    }
+
+    if ((editingAccount as any).referredOverrideMode === '' || (editingAccount as any).referredOverrideMode === undefined) {
+      updateData.referredOverrideMode = deleteField();
+    } else {
+      updateData.referredOverrideMode = (editingAccount as any).referredOverrideMode;
+    }
+    if ((editingAccount as any).referredOverrideType === '' || (editingAccount as any).referredOverrideType === undefined) {
+      updateData.referredOverrideType = deleteField();
+    } else {
+      updateData.referredOverrideType = (editingAccount as any).referredOverrideType;
+    }
+    if ((editingAccount as any).referredOverridePct === '' || (editingAccount as any).referredOverridePct === undefined) {
+      updateData.referredOverridePct = deleteField();
+    } else {
+      updateData.referredOverridePct = Number((editingAccount as any).referredOverridePct) || 0;
+    }
+    if ((editingAccount as any).referredOverrideFlat === '' || (editingAccount as any).referredOverrideFlat === undefined) {
+      updateData.referredOverrideFlat = deleteField();
+    } else {
+      updateData.referredOverrideFlat = Number((editingAccount as any).referredOverrideFlat) || 0;
     }
 
     // Handle referralPercentage explicitly to avoid undefined
@@ -904,7 +1007,7 @@ export default function Accounts() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-black/80 backdrop-blur-lg rounded-xl p-8 border border-purple-500/20 w-full max-w-md max-h-[90vh] overflow-y-auto">
+          <div className="bg-black/80 backdrop-blur-lg rounded-xl p-8 border border-purple-500/20 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-2xl font-bold text-white mb-6">Add New Account</h2>
             <form onSubmit={handleAddAccount} className="space-y-4">
               <div>
@@ -1194,15 +1297,26 @@ export default function Accounts() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Brokered Override %</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={(newAccount as any).brokeredOverridePct}
-                    onChange={(e) => setNewAccount({ ...newAccount, brokeredOverridePct: e.target.value } as any)}
-                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="e.g. 10"
-                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={(newAccount as any).brokeredOverridePct}
+                      onChange={(e) => setNewAccount({ ...newAccount, brokeredOverridePct: e.target.value } as any)}
+                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="% e.g. 10"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={(newAccount as any).brokeredOverrideFlat}
+                      onChange={(e) => setNewAccount({ ...newAccount, brokeredOverrideFlat: e.target.value } as any)}
+                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="$ flat"
+                    />
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1223,15 +1337,26 @@ export default function Accounts() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Funded Override %</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={(newAccount as any).fundedOverridePct}
-                    onChange={(e) => setNewAccount({ ...newAccount, fundedOverridePct: e.target.value } as any)}
-                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="e.g. 25"
-                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={(newAccount as any).fundedOverridePct}
+                      onChange={(e) => setNewAccount({ ...newAccount, fundedOverridePct: e.target.value } as any)}
+                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="% e.g. 25"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={(newAccount as any).fundedOverrideFlat}
+                      onChange={(e) => setNewAccount({ ...newAccount, fundedOverrideFlat: e.target.value } as any)}
+                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="$ flat"
+                    />
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1252,15 +1377,26 @@ export default function Accounts() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Referred Override %</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={(newAccount as any).referredOverridePct}
-                    onChange={(e) => setNewAccount({ ...newAccount, referredOverridePct: e.target.value } as any)}
-                    className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="e.g. 5"
-                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={(newAccount as any).referredOverridePct}
+                      onChange={(e) => setNewAccount({ ...newAccount, referredOverridePct: e.target.value } as any)}
+                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="% e.g. 5"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={(newAccount as any).referredOverrideFlat}
+                      onChange={(e) => setNewAccount({ ...newAccount, referredOverrideFlat: e.target.value } as any)}
+                      className="w-full px-4 py-3 bg-white/5 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      placeholder="$ flat"
+                    />
+                  </div>
                 </div>
               </div>
 
